@@ -44,24 +44,28 @@ The course consists of five whole-day meetings in Uppsala (Sweden), with the pos
 
 ### Day 1 🌞 (21 Sep; 🪑&💻)
 
--   Introduction to the infinite applications of simulations (MJ)
+-   09:15–12:00: Introduction lecture - Infinite applications of simulations (MJ)
+-   13:00–16:30: Simulating phenotypic data 📈📉 (PDC)
 
 ### Day 2 🌞 (22 Sep; 🪑&💻)
 
--   Simulating phenotypic data (PDC)
+-   09:15 – 12:00	Simulating breeding programs: Broilers 🐥 (MJ)
+-   13:00 – 16:30	Simulating breeding programs: Cattle 🐄 (HM)
 
 ### Day 3 🌞 (23 Sep; 🪑&💻)
 
--   Breeding programs for different species (cattle, pigs, broilers and fish) (MJ, PDC, HM).
+-   09:15 – 12:00	Simulating breeding programs: Pigs 🐖 (PDC)
+-   13:00 – 16:30	Simulating breeding programs: Fish 🐟 (MJ)
 
 ### Day 4 🌞 (24 Sep; 🪑&💻)
 
--   Simulating disease transmission (HM)
+-   09:15 – 12:00	Simulating disease transmission (1) 🦠 (HM)
+-   13:00 – 16:30	Simulating disease transmission (2) 🦠 (HM)
 
 ### Day 5 🌞 (25 Sep; 🪑&💻)
 
--   Simulating Biomarker and RNA-Seq data (HM) 
--   Power analysis and statistical power testing (MJ)
+-   09:15 – 12:00	Simulating biomarker and RNA-Seq data 🧬 (HM)
+-   13:00 – 16:30	Power analysis and statistical power testing (MJ)
 
 ### Day 6 🍁 (1 Oct; 💻)
 
