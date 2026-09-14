@@ -49,12 +49,13 @@ The course consists of five whole-day meetings in Uppsala (Sweden), with the pos
 
 ### Day 2 🌞 (22 Sep; 🪑&💻)
 
--   09:15 – 12:00	Simulating breeding programs: Broilers 🐥 (MJ)
+
+-   09:15 – 12:00	Simulating breeding programs: Pigs 🐖 (PDC)
 -   13:00 – 16:30	Simulating breeding programs: Cattle 🐄 (HM)
 
 ### Day 3 🌞 (23 Sep; 🪑&💻)
 
--   09:15 – 12:00	Simulating breeding programs: Pigs 🐖 (PDC)
+-   09:15 – 12:00	Simulating breeding programs: Broilers 🐥 (MJ)
 -   13:00 – 16:30	Simulating breeding programs: Fish 🐟 (MJ)
 
 ### Day 4 🌞 (24 Sep; 🪑&💻)
