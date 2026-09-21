@@ -66,7 +66,7 @@ The course consists of five whole-day meetings in Uppsala (Sweden), with the pos
 ### Day 5 🌞 (25 Sep; 🪑&💻)
 
 -   09:15 – 12:00	Simulating biomarker and RNA-Seq data 🧬 (HM)
--   13:00 – 16:30	Power analysis and statistical power testing (MJ)
+-   13:00 – 16:30	Power analysis and statistical power testing 💪(MJ)
 
 ### Day 6 🍁 (1 Oct; 💻)
 
