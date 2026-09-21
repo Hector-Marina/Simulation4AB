@@ -4,17 +4,5 @@
 .Ruserdata
 
 data/raw/*
-!data/raw/.gitkeep
 data/processed/*
-!data/processed/.gitkeep
-
-output/S1_Phenotypic/*
-output/S2_BreedingPrograms/*
-output/S3_Biomarkers/*
-output/S4_SocialContacts/*
-output/S5_PowerAnalysis/*
-!output/S1_Phenotypic/.gitkeep
-!output/S2_BreedingPrograms/.gitkeep
-!output/S3_Biomarkers/.gitkeep
-!output/S4_SocialContacts/.gitkeep
-!output/S5_PowerAnalysis/.gitkeep
+output/*
