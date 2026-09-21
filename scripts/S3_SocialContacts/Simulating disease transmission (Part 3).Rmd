@@ -1,0 +1,679 @@
+---
+title: "Simulating disease transmission (Part 3)"
+author: "Hector Marina"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+<img src="../../logo/logo.png" width="150"/>
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+htmltools::tagList()
+```
+
+## Introduction
+
+This practical extends the previous disease-transmission simulations by introducing explicit contact networks and genetic differences among individuals. First, we will use `SimNet` to simulate transmission through alternative temporal contact structures and evaluate which network best explains observed infection events. We will then incorporate breeding values for susceptibility and infectivity to explore how genetic selection may influence disease transmission and population-level prevalence.
+
+1.  [Network-based transmission models](#Nbtm)\
+2.  [Incorporating breeding values into transmission models](#BVtm)\
+
+### Required packages
+
+```{r message=FALSE}
+#remotes::install_github("Hector-Marina/SimNet", dependencies=TRUE, build_vignettes=TRUE)
+library(SimNet)
+```
+
+## Network-based transmission models {#Nbtm}
+
+The individual-based models introduced previously assume that infection risk depends on the number of infectious individuals to which a susceptible individual is exposed. However, in real populations, individuals do not necessarily interact equally with every other individual.
+
+*Network-based transmission models* explicitly represent these potential transmission pathways. Individuals are represented as nodes, while connections between individuals represent opportunities for pathogen transmission. These connections can differ in their strength, direction, and persistence through time.
+
+Here, we will use the `SimNet` package to simulate different temporal contact structures and investigate how they affect disease transmission.
+
+```{r message=FALSE}
+library(SimNet)
+```
+
+We begin, once more, by fixing a random seed to make the stochastic simulations reproducible.
+
+```{r message=FALSE}
+set.seed(123)
+```
+
+The complete `SimNet` workflow and additional examples can be explored using the package vignette:
+
+```{r eval=FALSE}
+browseVignettes("SimNet")
+```
+
+`SimNet` uses a simulation object that is progressively updated as population information, contact networks, and transmission events are added, following a similar object-based workflow to that used in `AlphaSimR`.
+
+### Create the population
+
+We first create a population of 200 individuals followed for 100 time steps (previous `nsteps`). The simulation will be repeated 100 times (a.k.a. replicates).
+
+```{r message=FALSE}
+POP=simplePOP(
+  NIDs=200,  # Number of individuals
+  steps=100, # Number of steps (nsteps)
+  rep=100)   # Total replicates
+POP
+```
+
+The `simPOP` object will progressively store the contact networks, infection histories, and transmission information generated during the simulation.
+
+### Direct contact networks
+
+We first simulate a weighted temporal contact network representing opportunities for direct transmission between individuals. `simCONT()` generates contact weights from a gamma distribution. Here, `gshape = 1` and `gscale = 5` produce a right-skewed distribution with a mean contact weight of 5 and a long tail of stronger contacts. The parameter `rho = 0.25` introduces correlation between the contact weights of consecutive time steps. This parameters from social networks have been derived from [Marina et al., (2024)](https://doi.org/10.1016/J.APPLANIM.2024.106366).
+
+```{r message=FALSE}
+POP=simCONT(
+  POP=POP,        # Population object
+  NameCont="SIN", # Name of the contact network (Social Interaction Network)
+  gshape=1,       # Contact weights parameters
+  gscale=5,
+  val=1,          # Multiplicative scaling factor for the simulated values
+  rho=0.25        # Correlation between networks
+)
+```
+
+Weighted direct-contact networks can represent differences in the frequency, duration, or intensity of interactions between animals. For example, [de Freslon et al. (2019)](https://doi.org/10.1016/J.APPLANIM.2019.01.006) used behavioral contact networks in dairy cattle to investigate contacts potentially relevant for direct transmission of *Leptospira*.
+
+We can visualize the contact weights during the first simulation step. Darker cells indicate stronger contact between two individuals.
+
+```{r message=FALSE}
+heatmap(POP@ContactM[["SIN"]][[1]], 
+        Colv = NA, Rowv = NA, symm = TRUE, revC = TRUE)
+```
+
+The matrix is symmetric because a distance proximity contact between individuals $i$ and $j$ is assumed to represent the same connection in both directions:
+
+$$
+\phi_{ij}=\phi_{ji}.
+$$
+
+### Object-mediated contact networks
+
+Pathogens can also be transmitted indirectly through shared objects or environmental locations. In this case, two individuals do not need to be present at the same time. `simOBJ()` simulates this process by recording the sequential use of shared objects. Here, individuals use 24 possible milking positions twice per simulation step.
+
+```{r message=FALSE}
+POP=simOBJ(POP=POP,
+  NameCont="MPN", # Name of the contact network (Milking Parlour Network)
+  pos=24,         # Available positions
+  freq=2,         # Number of uses per individuals (Two milkings)
+  val=12          # Multiplicative scaling factor for the simulated values
+)
+```
+
+This network can represent a pathogen deposited by one animal at a milking position and subsequently acquired by another animal using the same position.
+
+A similar concept occurs in environmental transmission of chronic wasting disease in white-tailed deer. [Egan et al. (2023)](https://doi.org/10.1002/ecs2.4434) investigated indirect contact through shared deer scrapes, where infectious material deposited by one individual may later expose another individual.
+
+We can again visualize the contact matrix, in this case using the function `plot()` to represent the contact matrix as a network
+
+```{r message=FALSE}
+plot(POP,type="cont.net", ContactM="MPN", steps=1)
+```
+
+Unlike the direct-contact network, this matrix is directed and therefore not necessarily symmetric. If individual $i$ uses an object before individual $j$, transmission may be possible from $i$ to $j$, but not necessarily from $j$ to $i$:
+
+$$
+\phi_{ij}\neq\phi_{ji}.
+$$
+
+### Homogeneous-mixing network
+
+Finally, we simulate a homogeneous-mixing network (`NCN`) in which every individual is connected to every other individual with the same weight (`val`).
+
+```{r message=FALSE}
+POP=uniCONT(POP=POP,
+  NameCont="NCN", # Name of the contact network (Naïve Contact Network)
+  val=1           # Simulated values
+)
+```
+
+The contact matrix is therefore:
+
+$$
+\phi_{ij}=
+\begin{cases}
+1, & i\neq j\\
+0, & i=j.
+\end{cases}
+$$
+
+This network provides a reference scenario in which transmission is not restricted by a particular contact structure. In terms of contact availability, it resembles the homogeneous-mixing individual-based model used previously because every infectious individual can potentially expose every susceptible individual.
+
+The `simPOP` object now contains three alternative transmission structures:
+
+```{r message=FALSE}
+names(POP@ContactM)
+```
+
+### Simulate transmission through a network
+
+We can now simulate disease transmission through one of these networks. We use the transmission ($\beta$) and recovery ($\gamma$) parameters from the `SimNet` vignette, selected to resemble the mastitis infection dynamics described by [Woudstra et al. (2023)](https://doi.org/10.3168/JDS.2022-22942).
+
+```{r message=FALSE}
+beta=0.000172244
+gamma=0.0358299
+```
+
+For this example, transmission occurs through the object-mediated milking-parlour network (`MPN`). Setting `epsilon = NULL` means that recovered individuals immediately become susceptible again, producing an SIS model (\$ S\rightarrow I\rightarrow S \$).
+
+```{r message=FALSE}
+POP=SIRmod(POP=POP, 
+  NameCont="MPN",           # Name of the contact network
+  beta=beta,
+  gamma=gamma,
+  epsilon=NULL,
+  IDseed=sample(POP@IDs,7)  #Initial infected individuals (7)
+)
+```
+
+### Visualize individual infection histories
+
+The epidemiological status of every individual can be visualized for a selected simulation replicate.
+
+```{r message=FALSE}
+plot(POP,rep=1,type="inf.mat")
+```
+
+Each row represents an individual and each column represents a simulation step, allowing us to follow infection and recovery events at the individual level.
+
+### Visualize population-level dynamics
+
+The individual infection histories can also be summarized across simulation replicates:
+
+```{r message=FALSE}
+plot(POP,type="inf.curv")
+```
+
+### Infer the most likely transmission network
+
+In simulations, we know that the `MPN` network generated the infections. In real epidemiological data, however, the actual transmission route may be unknown. `RISKcont()` evaluates how compatible each observed infection event is with the available candidate contact networks.
+
+Here, the homogeneous-mixing network (`NCN`) is used as the reference:
+
+```{r message=FALSE}
+POP=RISKcont(POP=POP,
+  NameCont=names(POP@ContactM), # Candidate transmission networks
+  ref="NCN",                    # Reference scenario (Baseline)
+  verbose=FALSE
+)
+```
+
+A transmission probability of zero indicates that an observed infection could not be explained by a particular network because there was no compatible contact with an infectious individual. We can summarize the proportion of impossible transmission events for each candidate network:
+
+```{r message=FALSE}
+tapply(POP@RISKcont$TProb,
+       POP@RISKcont$ContactM,
+       function(x) mean(x==0,na.rm=TRUE))
+```
+
+Finally, the relative support for each candidate transmission network can be visualized against the homogeneous-mixing reference.
+
+```{r message=FALSE}
+plotRISKcont2(POP, ref="NCN", Nsim="MPN-simulated transmission")
+```
+
+Because transmission was simulated using the `MPN`, we can compare whether the inference procedure provides greater support for this network than for the alternative candidate transmission structures.
+
+> **NOTE:** The analysis identifies the contact network that is most compatible with the observed infection events among the candidate networks provided. It does not demonstrate that the selected network is the only possible biological transmission route.
+
+::: exercise
+### Exercise 1: Exploring SimNet
+
+Use the package documentation and the structure of the `simPOP` object to explore how different transmission scenarios can be simulated and analysed.
+
+1.  *Explore the `simPOP` object.*\
+    Inspect the information stored in the object using:
+
+    ``` r
+    POP
+    slotNames(POP)
+    names(POP@ContactM)
+    length(POP@ContactM$SIN)
+    dim(POP@ContactM$SIN[[1]])
+    ```
+
+    What information is stored in each part of the object? Use `ls("package:SimNet")` and the help pages to identify functions that we have not used yet. In particular, investigate `TPest()` and `RISKest()`.
+
+2.  *Number of initially infected individuals.*\
+    Increase the number of individuals initially infected and simulate transmission using `"SIN"`. How does increasing the number of initial infections affect the epidemic dynamics?
+
+3.  *Can SimNet recover the causal network?*\
+    Generate several independent contact networks with the same parameters but different names:
+
+    ``` r
+    POP=simCONT(POP,NameCont="SIN1",gshape=1,gscale=5,rho=0.25,verbose=FALSE)
+    POP=simCONT(POP,NameCont="SIN2",gshape=1,gscale=5,rho=0.25,verbose=FALSE)
+    POP=simCONT(POP,NameCont="SIN3",gshape=1,gscale=5,rho=0.25,verbose=FALSE)
+    ```
+
+    Simulate transmission using only one of them and use `RISKcont()` to test whether the network used to generate the infections (causative transmission network) is still the one that achieved the maximum likelihood despite the presence of similar contact network structures.
+
+    Then explore potential effective contacts using the function `RISKest()` and the causative network. Can `RISKest()` identify the individual that actually generated each simulated infection?
+
+4.  *Temporal stability.*\
+    Repeat the previous exercise using networks with different temporal correlations, for example `rho=0`, `0.5`, and `0.9`. Does higher temporal stability improve or reduce the ability to identify the causal transmission network? Why might persistent contact patterns contain more or less information than rapidly changing contacts?
+
+5.  *Estimate the transmission parameters.*\
+    The `TPest()` function can be used to estimate the values of $\beta$ and $\gamma$ from the status matrix. it implements the method described in previous exercises.
+
+    ``` r
+    TP=TPest(POP)
+    head(TP)
+    ```
+
+    How close are the estimated values of $\beta$ and $\gamma$ to those used for simulation? Why do you think the values differ? Refer to the previous exercises to check whether contacts were used to estimate the infection and recovery rates.
+
+6.  *Simulate several isolated farms.*\
+    Increase the population to 500 individuals and divide it into five farms of 100 animals. First simulate a `"SIN"` network and then remove all contacts between farms using the next function:
+
+    ``` r
+    farm=rep(1:5,each=200)
+
+    POP@ContactM[["SIN_farms"]]=lapply(
+        POP@ContactM[["SIN"]],
+        function(M){
+            # Remove contacts between farms
+            M[outer(farm,farm,"!=")]=0
+            diag(M)=0
+            M
+        }
+    )
+
+    heatmap(POP@ContactM[["SIN_farms"]][[1]],
+        Colv = NA, Rowv = NA, symm = TRUE, revC = TRUE)
+    ```
+
+    The resulting network contains contacts within farms but no contacts between farms.
+
+    Introduce infected individuals into one or several farms and simulate transmission through `"SIN_farms"`. Do the epidemic trajectories differ among farms?
+
+    > **NOTE:** The $\beta$ and $\gamma$ values, as well as the weights and parameters used to generate the contact networks, have been carefully calibrated to resemble values observed in real data following Marina et al. and Woudstra et al. Small changes to these values may make the candidate networks no longer comparable and can therefore bias the inference of the causative transmission network.
+:::
+
+## Incorporating breeding values into transmission models {#BVtm}
+
+### Simple simulation of genetic selection
+
+Before incorporating breeding values into the transmission simulations, we will briefly illustrate the expected response to selection for traits with additive genetic variation that may represent individual susceptibility and infectivity. - Susceptibility is defined as the propensity of an individual to become infected when exposed to an infectious individual of average infectivity. - Infectivity is defined as the ability of an infected individual to transmit infection to a susceptible individual of average susceptibility.
+
+Lets fix a random seed, again, to make the simulation reproducible.
+
+```{r message=FALSE}
+set.seed(123)
+```
+
+Let's assume that breeding values for these traits follow a normal distribution with $\mu=0$ and an additive genetic standard deviation of $\sigma_A=0.10$. Both traits have a heritability of $h^2=0.05$. Heritability is defined as
+
+$$
+h^2=\frac{\sigma_A^2}{\sigma_P^2},
+$$
+
+where $\sigma_A^2$ is the additive genetic variance and $\sigma_P^2$ is the phenotypic variance.
+
+```{r message=FALSE}
+h2=0.05       # Heritability
+sigma_A=0.10  # Additive genetic standard deviation
+```
+
+We will select the best 20% of animals based on their phenotypic values. Selecting 20% of the individuals corresponds approximately to a selection intensity of $i\approx1.75$. This selection will be done independently of the current breeding program giving farmers the ability to decide the proportion of individuals that comes from this independent selection line in comparison with the conventional breeding line "production"-based.
+
+The relationship between the proportion and the intensity of selection can be estimated
+
+```{r message=FALSE}
+p=0.05   # Proportion selected
+i=dnorm(qnorm(1-p))/p
+i
+```
+
+The expected response to selection,under the described conditions, can be calculated as \$ R=i\sigma\_A \$:
+
+```{r message=FALSE}
+R=i*sqrt(h2)*sigma_A
+```
+
+The distribution of breeding values across 50 generations can be visualized as follows:
+
+```{r message=FALSE}
+N=1000
+ngen=50 # Total number of generations
+
+# BV distributions
+BV_gen=vector("list",ngen+1)
+for(g in 0:ngen) BV_gen[[g+1]]=rnorm(N, mean=-R*g, sd=sigma_A)
+breaks=seq( min(unlist(BV_gen)), max(unlist(BV_gen)),length.out=35)
+
+
+cols=adjustcolor(hcl.colors(ngen,"Viridis"),alpha.f=0.25)
+hist(BV_gen[[1]], breaks=breaks, freq=FALSE,
+     col=cols[1], border=NA,
+     xlab="Breeding value",
+     main="Response to selection across generations")
+
+for(g in (seq(5,ngen,5)+1)){
+  hist(BV_gen[[g]],breaks=breaks,freq=FALSE,
+       col=cols[g],border=NA,add=TRUE)}
+
+legend("topright", legend=paste0("Generation ",c(0,seq(5,ngen,5))),
+       fill=cols, border=NA, bty="n", cex=0.7)
+```
+
+Selection shifts the mean breeding value in the desired direction. The aim of both breeding programs will be to reduce both susceptability and infectivity to a given infection. Note that the variation among selected animals also tends to decrease because only part of the original population is retained.
+
+### Incorporating genetic selection into SimNet
+
+We will now incorporate the expected genetic response to selection into a disease-transmission simulation. We simulate a farm with 200 individuals and three alternative contact structures: a social interaction network (`SIN`), an object-mediated milking-parlour network (`MPN`), and a homogeneous-mixing network (`NCN`).
+
+Transmission will be simulated through the `MPN` using an SIS model, representing a persistent infection in which recovered individuals can become susceptible again.
+
+```{r message=FALSE}
+set.seed(123)
+
+N=200
+
+POP=simplePOP(NIDs=N,steps=100,rep=100)
+POP=simCONT(POP=POP,NameCont="SIN", gshape=1,gscale=5,val=1,rho=0.25)
+POP=simOBJ( POP=POP,NameCont="MPN", pos=24, freq=2, val=12)
+POP=uniCONT(POP=POP,NameCont="NCN", val=1)
+```
+
+The transmission and recovery parameters are those used in the previous *SimNet* example.
+
+```{r message=FALSE}
+beta=0.000172244
+gamma=0.0358299
+NID_inf=sample(POP@IDs,7) # Intial infected individuals
+```
+
+### From breeding values to individual transmission risk
+
+The additive genetic standard deviation is $\sigma_A=0.10$ and $h^2=0.05$. Therefore, the corresponding phenotypic and residual standard deviations are
+
+$$
+\sigma_P=\frac{\sigma_A}{\sqrt{h^2}}
+$$
+
+and
+
+$$
+\sigma_E=\sqrt{\sigma_P^2-\sigma_A^2}.
+$$
+
+```{r message=FALSE}
+sigma_P=sigma_A/sqrt(h2)
+sigma_E=sqrt(sigma_P^2-sigma_A^2)
+
+cat("sigma_P:", sigma_P,"\n")
+cat("sigma_E:", sigma_E,"\n")
+```
+
+With the parameters used here, $\sigma_P\approx0.45$.
+
+We first simulate susceptibility and infectivity breeding values for animals originating from the conventional production breeding line. Both traits have mean breeding value zero.
+
+```{r message=FALSE}
+BV_sus_prod=rnorm(N,mean=0,sd=sigma_A)
+BV_inf_prod=rnorm(N,mean=0,sd=sigma_A)
+
+E_sus=rnorm(N,mean=0,sd=sigma_E)
+E_inf=rnorm(N,mean=0,sd=sigma_E)
+
+P_sus_prod=BV_sus_prod+E_sus
+P_inf_prod=BV_inf_prod+E_inf
+```
+
+For this exercise, phenotypic values are transformed into positive *relative transmission multipliers*:
+
+$$
+w=2^{z/2},
+$$
+
+where $p$ is the phenotypic value. A value of $p=0$ represents an average individual ($w=1$), $p=-1$ reduces the trait by approximately 29% ($w=0.71$), and $p=-2$ reduces it by 50% ($w=0.5$). Conversely, $p=+2$ doubles the relative susceptibility or infectivity ($w=2$).
+
+Thus, lower phenotypic values correspond to lower susceptibility or infectivity while ensuring that all transmission multipliers remain positive.
+
+```{r message=FALSE}
+sus_prod=2^(P_sus_prod/2)
+inf_prod=2^(P_inf_prod/2)
+```
+
+### Farmer 1: selection for lower susceptibility
+
+The first farmer decides that 80% of future animals will be progeny of bulls from the susceptibility-selection line after five generations of selection.
+
+The expected breeding-value distribution after 30 generations is already stored in `BV_gen[[31]]`, because the first element corresponds to generation 0.
+
+```{r message=FALSE}
+prop_sus=0.80
+n_sus=round(N*prop_sus)
+
+IDs_sus=sample(1:N,n_sus)
+
+# Bulls from generation 30 of the susceptibility-selection line
+sire_BV=sample(BV_gen[[31]],n_sus,replace=TRUE)
+
+# Production-line dams
+dam_BV=BV_sus_prod[IDs_sus]
+
+# Expected progeny BV + Mendelian sampling
+offspring_BV=(sire_BV+dam_BV)/2 + rnorm(n_sus,mean=0,sd=sigma_A/sqrt(2))
+
+BV_sus_sel=BV_sus_prod
+BV_sus_sel[IDs_sus]=offspring_BV
+```
+
+> **NOTE --- Why add Mendelian sampling?**\
+> The expected breeding value of an offspring is the average of the sire and dam breeding values, but full siblings do not inherit exactly the same combination of alleles. Mendelian sampling represents this random segregation of parental alleles and therefore creates genetic variation among offspring from the same parents. Without it, all offspring from the same sire--dam combination would receive exactly the same breeding value.
+
+The phenotypic susceptibility of the resulting animals is then calculated using the same environmental component.
+
+```{r message=FALSE}
+P_sus_sel=BV_sus_sel+E_sus
+
+sus_sel=2^(P_sus_sel/2)
+
+cat("Production population:",mean(sus_prod),"\n")
+cat("Selected progeny:", mean(sus_sel[IDs_sus]),"\n")
+```
+
+### Farmer 2: selection for lower infectivity
+
+A second farmer instead decides that 70% of future animals will descend from bulls selected for lower infectivity after 40 generations.
+
+```{r message=FALSE}
+prop_inf=0.70
+n_inf=round(N*prop_inf)
+
+IDs_inf=sample(1:N,n_inf)
+
+# Bulls from generation 40 of the infectivity-selection line
+sire_BV=sample(BV_gen[[41]],n_inf,replace=TRUE)
+
+# Production-line dams
+dam_BV=BV_inf_prod[IDs_inf]
+
+offspring_BV=(sire_BV+dam_BV)/2 + rnorm(n_inf,mean=0,sd=sigma_A/sqrt(2))
+
+BV_inf_sel=BV_inf_prod
+BV_inf_sel[IDs_inf]=offspring_BV
+
+P_inf_sel=BV_inf_sel+E_inf
+
+inf_sel=2^(P_inf_sel/2)
+
+cat("Production population:",mean(inf_prod),"\n")
+cat("Selected progeny:", mean(inf_sel[IDs_inf]),"\n")
+```
+
+### Incorporating susceptibility and infectivity into the contact network
+
+In `SimNet`, rows of the contact matrix represent the infectious source and columns represent susceptible recipients. Therefore:
+
+-   *susceptibility* modifies the rows
+-   *infectivity* modifies the columns;
+
+For an original contact weight $\phi_{ij}$, the genetically adjusted transmission weight becomes
+
+$$
+\phi_{ij}^{*}
+=
+\phi_{ij}
+\times w^{S}_{i}
+\times w^{I}_{j}.
+$$
+
+The following function applies these individual effects to every temporal contact matrix.
+
+```{r message=FALSE}
+weight_network=function(POP,ContactM,susceptibility,infectivity){
+  POP@ContactM[[ContactM]]=lapply(POP@ContactM[[ContactM]],
+    function(M){
+      # Susceptibility of the recipient individual
+      M=sweep(M,2,susceptibility,"*")
+
+      # Infectivity of the source individual
+      M=sweep(M,1,infectivity,"*")
+
+      M[M<0]=0
+      diag(M)=0
+      M
+    }
+  )
+
+  if(!validate(POP))
+    stop("Invalid contact matrices after weighting.")
+
+  POP
+}
+```
+
+We can now create three epidemiological scenarios:
+
+1.  conventional production breeding;
+2.  80% progeny from the lower-susceptibility line;
+3.  70% progeny from the lower-infectivity line.
+
+To avoid storing several very large sets of contact matrices simultaneously, we simulate each scenario separately and retain the infection histories.
+
+First simulate the conventional breeding scenario.
+
+```{r message=FALSE}
+POP1=weight_network(POP=POP,ContactM="MPN",
+  susceptibility=sus_prod, infectivity=inf_prod)
+
+POP1=SIRmod(POP=POP1, NameCont="MPN",
+    beta=beta, gamma=gamma, epsilon=NULL,
+    IDseed=NID_inf)
+
+plot(POP1,type="inf.curv")
+```
+
+Then introduce selection for reduced susceptibility.
+
+```{r message=FALSE}
+POP2=weight_network(POP=POP,ContactM="MPN",
+  susceptibility=sus_sel, infectivity=inf_prod)
+
+POP2=SIRmod(POP=POP2, NameCont="MPN",
+    beta=beta, gamma=gamma, epsilon=NULL,
+    IDseed=NID_inf)
+
+plot(POP2,type="inf.curv")
+```
+
+And finally introduce selection for reduced infectivity.
+
+```{r message=FALSE}
+POP3=weight_network(POP=POP,ContactM="MPN",
+  susceptibility=sus_prod, infectivity=inf_sel)
+
+POP3=SIRmod(POP=POP2, NameCont="MPN",
+    beta=beta, gamma=gamma, epsilon=NULL,
+    IDseed=NID_inf)
+
+plot(POP3,type="inf.curv")
+```
+
+### Effect of selection for susceptibility and infectivity.
+
+We can then compare the conventional breeding program with the farm introducing 80% progeny from the susceptibility-selection and 70% progeny from the infectivity-selection line.
+
+The average prevalence of the infection throgh the simulated period can be estimated as:
+
+```{r message=FALSE}
+cat("Average prebalence of the high-production population:",
+    mean(sapply(POP1@statusM, function(M) mean(M==1)))*100,"\n")
+cat("Average prebalence of the low-susceptibility population:",
+    mean(sapply(POP2@statusM, function(M) mean(M==1)))*100,"\n")
+cat("Average prebalence of the low-infectivity population:",
+    mean(sapply(POP3@statusM, function(M) mean(M==1)))*100,"\n")
+```
+
+The two strategies act through different components of transmission. Selection for susceptibility reduces the probability that genetically improved individuals acquire infection, whereas selection for infectivity reduces their contribution to transmission once infected.
+
+Because heritability is low and only a fraction of the herd originates from the selected lines, relatively small changes in prevalence are expected under these settings.
+
+::: exercise
+### Exercise 2: Genetic selection and disease transmission
+
+1.  *Intensity of selection.*\
+    Design alternative selection strategies using different selection intensities to modify the expected genetic gain per generation. Repeat the farmers' decisions using these new selection intensities. How does selection intensity affect the reduction in susceptibility and infectivity and, consequently, infection prevalence?
+
+2.  *Susceptibility vs. infectivity.*\
+    Vary the proportion of progeny originating from the susceptibility- and infectivity-selection lines, as well as the generation from which the selected sires are used. Which strategy reduces infection prevalence most effectively high proportion or selecting bulls from later generations?
+
+3.  *Combined selection.*\
+    Introduce animals selected for both lower susceptibility and lower infectivity. How does combining both selection strategies affect infection prevalence over time?
+
+4.  *Genetic antagonism with production.*\
+    Introduce an unfavorable genetic correlation between production and susceptibility or infectivity, such that animals with lower susceptibility or infectivity also have lower production potential. How does this relationship affect the different selection strategies and implementation scenarios?
+
+5.  *Economic consequences.*\
+    Assume that infection reduces production by 30%. The expected total production of a population of $N$ animals can be approximated as
+
+$$
+  Y_{\mathrm{exp}}=N\bar{Y}(1-0.30\bar{P}),
+  $$
+
+where $\bar{Y}$ is the average production per animal and $\bar{P}$ is the mean prevalence of infection.
+
+Relative to a disease-free population, expected production can therefore be expressed as
+
+$$
+  Y_{\%}=(1-0.30\bar{P})\times100,
+  $$
+
+where 100% represents the expected production in the absence of infection.
+
+Calculate total production across all animals and days for each breeding strategy. Which strategy results in the highest total production after accounting for both production losses due to infection and the unfavorable genetic relationship between disease resistance and production?
+:::
+
+## Recommended literature
+
+- Keeling, M.J. & Rohani, P. (2011). [*Modeling Infectious Diseases in Humans and Animals*](https://doi.org/10.1016/S1473-3099(08)70147-6). Princeton University Press.
+
+- Vynnycky, E. & White, R.G. (2010). [*An Introduction to Infectious Disease Modelling*](https://doi.org/10.1093/eurpub/ckq163). Oxford University Press.
+
+- Woudstra, S., Wente, N., Zhang, Y., Leimbach, S., Gussmann, M.K., Kirkeby, C. & Krömker, V. (2023). [Strain diversity and infection durations of *Staphylococcus* spp. and *Streptococcus* spp. causing intramammary infections in dairy cows](https://doi.org/10.3168/JDS.2022-22942). *Journal of Dairy Science*.
+
+- Marina, H., Nielsen, P.P., Fikse, W.F. & Rönnegård, L. (2024). [Multiple factors shape social contacts in dairy cows](https://doi.org/10.1016/J.APPLANIM.2024.106366). *Applied Animal Behaviour Science*, 278, 106366.
+
+- de Freslon, I., Martínez-López, B., Belkhiria, J., Strappini, A. & Monti, G. (2019). [Use of social network analysis to improve the understanding of social behaviour in dairy cattle and its impact on disease transmission](https://doi.org/10.1016/J.APPLANIM.2019.01.006). *Applied Animal Behaviour Science*.
+
+- Egan, M.E., Pepin, K.M., Fischer, J.W., et al. (2023). [Social network analysis of white-tailed deer scraping behavior: Implications for disease transmission](https://doi.org/10.1002/ecs2.4434). *Ecosphere*.

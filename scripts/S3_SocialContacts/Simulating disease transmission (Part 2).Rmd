@@ -1,0 +1,779 @@
+---
+title: "Simulating disease transmission (Part 2)"
+author: "Hector Marina"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+<img src="../../logo/logo.png" width="150"/>
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+htmltools::tagList()
+```
+
+## Introduction
+
+This practical begins by estimating transmission and recovery parameters from disease data, then expands the previously introduced compartmental model into an individual-based model in which the infection history of each animal is followed explicitly, and finally introduces spatial transmission models where infection risk depends on the distance between individuals.
+
+1.  [Model Parameterization](#mp)
+2.  [Individual-based models](#ibm)
+3.  [Spatial transmission models](#stm) 
+
+### Required packages
+
+```{r message=FALSE}
+library(MASS)
+```
+
+## Model Parameterization {#mp}
+
+To learn how transmission-model parameters can be estimated from longitudinal disease data, we will first simulate an epidemic using the stochastic compartmental model introduced in the previous practical.
+Because the values of $\beta$ and $\gamma$ used to generate the data are known, we can then test whether they can be recovered from the simulated observations.
+
+The example resembles longitudinal mastitis surveillance such as that described by [Woudstra et al. (2023)](https://doi.org/10.3168/JDS.2022-22942), where animals are repeatedly sampled to determine whether a mastitis-causing pathogen is present.
+For simplicity, animals positive for a selected pathogen will be considered infected ($I$), whereas pathogen-negative animals will be considered susceptible ($S$).
+
+We begin by fixing a random seed to make the stochastic simulation reproducible.
+
+```{r message=FALSE}
+set.seed(123)
+```
+
+Define the simulation period, transmission rate ($\beta$), recovery rate ($\gamma$), and vectors used to store the number of susceptible ($S$) and infected ($I$) individuals and the infection and recovery events occurring each day.
+
+```{r message=FALSE}
+nsteps=100
+time  =1:nsteps
+
+beta  = 0.3     # Rate of infection
+gamma = 1/14    # Rate of recovery (14 days to recover)
+
+S=I=numeric(nsteps)    # Susceptible and Infected compartments info
+new_infections=new_recoveries=numeric(nsteps-1) # New infections and recoveries
+```
+
+Set the initial population conditions: susceptible individuals (995/1000), infectious individuals (5/1000), and recovered individuals (0/1000).
+
+```{r message=FALSE}
+N=1000
+S[1]=N - 5
+I[1]=5
+```
+
+The simulated disease follows an SIS ($S \rightarrow I \rightarrow S$) structure.
+Susceptible individuals become infected according to the transmission rate $\beta$, whereas infected individuals recover at rate $\gamma$ and immediately become susceptible again:
+
+$$
+\frac{dS}{dt}=-\beta\frac{SI}{N}+\gamma I
+$$
+
+$$
+\frac{dI}{dt}=\beta\frac{SI}{N}-\gamma I.
+$$
+
+At each time step, the expected numbers of infection and recovery events are calculated and the actual numbers are sampled from negative-binomial distributions.
+
+```{r message=FALSE}
+for (t in 1:(nsteps-1)) {
+  # New infections
+  mu_inf=beta * (I[t] * S[t]) / N
+  new_infections[t]=min(MASS::rnegbin(1, mu = mu_inf, theta = 1), S[t])
+
+  # New recoveries
+  mu_cure=gamma * I[t]
+  new_recoveries[t]=min(MASS::rnegbin(1, mu = mu_cure, theta = 1), I[t])
+
+  # Update compartments
+  S[t+1] <- S[t] - new_infections[t] + new_recoveries[t]
+  I[t+1] <- I[t] + new_infections[t] - new_recoveries[t]
+}
+```
+
+We can now construct a dataset resembling longitudinal disease surveillance.
+For each day, the dataset contains the numbers of susceptible and infected individuals and the numbers of new infections and recoveries observed during the following time step.
+
+```{r message=FALSE}
+inf_df=data.frame(
+  time = time[-nsteps],
+  S_time = S[-nsteps],
+  I_time = I[-nsteps],
+  new_infections = new_infections,
+  new_recoveries = new_recoveries
+)
+```
+
+The resulting stochastic epidemic can be visualized as the number of susceptible and infected individuals over time.
+
+```{r message=FALSE}
+plot(time, S, type = "l", lwd = 3, col = "green4", ylim = c(0, N), 
+     xlab = "Days", ylab = "Population",las = 1)
+lines(time, I, lwd = 3, col = "orange")
+legend("right", legend = c("Susceptible (S)","Infected (I)"),
+         col = c("green4", "orange"), lwd = 3, bty = "n")
+```
+
+### Estimating the transmission rate ($\beta$)
+
+We will use the regression approach described by [Kirkeby et al. (2017)](https://doi.org/10.1038/s41598-017-09209-x), following the same principle used by [Zadoks et al. (2001)](https://doi.org/10.3168/jds.S0022-0302(01)74512-2).
+
+For the SIS model, the expected number of new infections during a time step is
+
+$$
+E(\text{new infections}_t)
+=
+\beta\frac{S_tI_t}{N}
+$$
+
+Taking logarithms gives:
+
+$$
+\log E(\text{new infections}_t)
+=
+\log(\beta)
++
+\log\left(\frac{S_tI_t}{N}\right)
+$$
+
+Therefore, $\log(S_tI_t/N)$ can be included as an offset in a count regression, and the intercept provides an estimate of $\log(\beta)$.
+
+Here we use negative-binomial regression to allow the number of new infections to be overdispersed.
+
+```{r message=FALSE}
+model_foi=MASS::glm.nb(new_infections ~ 1 + 
+                         offset(log(inf_df$S_time*inf_df$I_time/N)), data = inf_df)
+beta_hat=exp(coef(model_foi)[1])
+
+# Output
+cat("Estimated transmission rate (beta):", beta_hat, "\n")
+cat("True transmission rate (beta):", beta, "\n\n")
+```
+
+> **NOTE --- Why use an offset?**\
+> The mechanistic model already specifies that new infections are proportional to $SI/N$.
+> Including $\log(SI/N)$ as an offset fixes its regression coefficient to 1.
+> The regression therefore estimates $\log(\beta)$ rather than estimating a new relationship between $SI/N$ and the number of infections.
+
+### Estimating the recovery rate ($\gamma$)
+
+The same principle can be applied to recovery events.
+The expected number of recoveries during a time step is
+
+$$
+E(\text{new recoveries}_t)=\gamma I_t
+$$
+
+Taking logarithms gives
+
+$$
+\log E(\text{new recoveries}_t)
+=
+\log(\gamma)+\log(I_t)
+$$
+
+Thus, $\log(I_t)$ is used as the offset and the regression intercept estimates $\log(\gamma)$.
+
+```{r message=FALSE}
+# Model 2: Estimate cure rate (gamma)
+model_cure=glm.nb(new_recoveries ~ 1 + offset(log(I_time)), data = inf_df)
+gamma_hat =exp(coef(model_cure)[1])
+
+cat("Estimated cure rate (gamma):", gamma_hat, "\n")
+cat("True cure rate (gamma):", gamma, "\n")
+```
+
+The estimated values can now be compared with the known values used to generate the simulated epidemic.
+Differences are expected because the epidemic is stochastic and only one realization of the transmission process has been observed.
+
+### Understanding the transmission offset
+
+The transmission exposure
+
+$$
+\frac{SI}{N}
+$$
+
+changes continuously as the relative numbers of susceptible and infected individuals change.
+The following example illustrates this relationship for a population of 1,000 individuals.
+The red points represent the final simulated values.
+
+```{r message=FALSE}
+N=1000    # Total number of individuals
+x=0:1000
+
+S_test=N-x  # Susceptible individuals
+I_test=x    # Infected individuals
+
+plot(I_test,S_test*I_test/N,
+     type="l",lwd=3,las=1,
+     xlab="Number of infected individuals (I)",
+     ylab="Transmission exposure (SI/N)")
+
+points(inf_df$I_time,  # Add simulated values to the distribution
+       inf_df$S_time*inf_df$I_time/N, pch=16, col="red")
+
+abline(v=N/2,lty=2,col="grey50")
+```
+
+The transmission exposure $SI/N$ is largest when the population contains equal numbers of susceptible and infected individuals ($S=I=N/2$).
+This does **not** mean that the individual risk of infection is maximal at this point.
+Instead, it means that the population contains the largest combination of susceptible individuals available to become infected and infected individuals capable of transmitting infection.
+
+Accounting for this changing exposure allows $\beta$ to represent the transmission rate independently of changes in the numbers of susceptible and infected individuals.
+
+::: exercise
+### Exercise 1: How accurately can we recover the model parameters?
+
+We generated the epidemic using known values of $\beta$ and $\gamma$.
+Now investigate under which conditions the regression models are able to recover these parameters accurately.
+
+Modify one element at a time, repeat the stochastic simulation, and compare the estimated values ($\hat{\beta}$ and $\hat{\gamma}$) with the true values used to generate the epidemic.
+
+1.  *Transmission rate (*$\beta$).\
+    Simulate epidemics using lower and higher values of `beta`.
+    How does the transmission rate affect the accuracy and variability of $\hat{\beta}$?
+
+2.  *Recovery rate (*$\gamma$).\
+    Modify `gamma` to generate shorter or longer infectious periods ($1/\gamma$).
+    How does this affect the estimation of both $\beta$ and $\gamma$?
+
+3.  *Population size (*$N$).\
+    Compare small and large populations (e.g. `N = 100`, `500`, and `1000`).
+    When changing $N$, try to maintain a similar initial prevalence (`I[1]/N`) to make the scenarios comparable.
+
+4.  *Duration of surveillance.*\
+    Compare short and long observation periods (e.g. 30, 100, and 365 days).
+    Does having more observations improve parameter estimation?
+
+For each scenario, compare the estimated and true parameters.
+You can quantify the estimation error as:
+
+$$
+\text{Relative error}=
+\frac{|\hat{\beta}-\beta|}{\beta}\times100
+$$
+
+and equivalently for $\gamma$.
+
+Finally, based on your simulations, *under which conditions is parameter estimation most reliable?* Consider:
+
+-   Is a *large or small population* preferable?
+-   Are *high or low transmission rates* easier to estimate?
+-   Are *short or long infectious periods* more informative?
+-   Is a *short or long surveillance period* preferable?
+-   What happens when transmission is so low that very few infections occur or the infection disappears?
+
+> *NOTE:* In this exercise we fitted a negative-binomial regression.
+> Kirkeby et al. reported that negative-binomial regression estimates were very similar to those from Poisson regression, while it failed to estimate transmission rates in many simulations with sparse transmission events.
+:::
+
+## Individual-based models {#ibm}
+
+In the previous models, individuals were represented collectively by the number of animals in each compartment.
+In an individual-based model (IBM), each individual is represented explicitly and its epidemiological state is followed through time.
+
+Here, we will implement an \$ S \xrightarrow{\beta} I \xrightarrow{\gamma} R \xrightarrow{\theta} S\$.
+$\beta$ determines transmission between connected susceptible and infected individuals, $\gamma$ determines recovery, and $\theta$ determines the loss of immunity.
+Therefore, each animal can be in one of three next states:
+
+-   `0` = Susceptible ($S$)
+-   `1` = Infected ($I$)
+-   `2` = Recovered ($R$)
+
+Similarly to the compartmental models, in this example transmission will be possible between all individuals included in the simulation.
+
+> **NOTE:** In this discrete-time individual-based model, $\beta$, $\gamma$, and $\theta$ are used as *daily transition probabilities*.
+> In particular, $\beta$ represents the probability of transmission during a contact with an infected individual.
+> Its interpretation is therefore different from the previous compartmental models.
+
+Lets fix a random seed again to make the simulation reproducible.
+
+```{r message=FALSE}
+set.seed(123)
+```
+
+### Define the population and transmission parameters
+
+We first define the number of individuals, duration of the simulation, transition probabilities, and average number of contacts per individual.
+
+```{r message=FALSE}
+nsteps=100
+N=100
+
+beta=0.01   # S -> I
+gamma=1/7   # I -> R
+theta=1/14  # R -> S
+```
+
+With `gamma = 0.05`, an infected individual remains infected for approximately $1/\gamma=20$ days on average.
+Similarly, `theta = 0.2` corresponds to an average recovered period of approximately 5 days.
+Setting `theta = 0` would prevent recovered individuals from becoming susceptible again and would therefore convert the model from *SIRS* to *SIR*.
+Similarly, setting `theta = 1` would convert the model from *SIRS* to *SIS*.
+
+### Represent each individual explicitly
+
+The epidemiological state [$S=0$, $I=1$, and $R=2$] of every individual is stored in a matrix.
+Rows represent individuals and columns represent days.
+
+```{r message=FALSE}
+Status=matrix(0,nrow=N,ncol=nsteps)
+```
+
+Initially, every animal is susceptible except of five individual, which will be initially infected.
+
+```{r message=FALSE}
+infected=sample(1:N,5)
+Status[infected,1]=1
+```
+
+This matrix is one of the main differences between compartmental and individual-based models.
+Rather than storing only the total number of infected animals, we retain the *identity and disease history of every individual*.
+
+### Simulate disease progression
+
+We can now simulate the epidemic one day at a time.
+For this initial approach, we will assume a homogeneous-mixing framework, whereby each individual comes into contact with every other individual in the population.
+
+At the beginning of each day, individuals retain their previous epidemiological state.
+Three processes can then occur:
+
+1.  Recovered individuals may lose immunity ($R\rightarrow S$);
+2.  Infected individuals may recover ($I\rightarrow R$);
+3.  susceptible individuals may become infected through contact with infectious individuals ($S\rightarrow I$).
+
+```{r message=FALSE}
+for(i in 1:(nsteps-1)){
+  # 1. Loss of immunity: R -> S
+  R_S=which(Status[,i]==2)
+  if(length(R_S)>0){
+    LoI=rbinom(length(R_S), size=1, prob=theta)==1
+    Status[R_S[ LoI],i+1]=0
+    Status[R_S[!LoI],i+1]=2
+  }
+
+  # 2. Gain of Immunity: I -> R
+  I_R=which(Status[,i]==1)
+  if(length(I_R)>0){
+    GoI=rbinom(length(I_R), size=1, prob=gamma)==1
+    Status[I_R[ GoI],i+1]=ifelse(theta<1,2,0)
+    Status[I_R[!GoI],i+1]=1
+  }
+
+  # 3. Transmission of Infection: S -> I
+  I=which(Status[,i]==1)
+  S=which(Status[,i]==0)
+
+  if(length(I)>0 & length(S)>0){
+    p_inf=1-(1-beta)^length(I)
+    ToI=rbinom(length(S), size=1, prob=p_inf)==1
+    Status[S[ToI],i+1]=1
+  }
+}
+```
+
+For a susceptible individual with $k$ infectious contacts, the probability of avoiding infection from all contacts is
+
+$$
+(1-\beta)^k.
+$$
+
+Therefore, the probability of becoming infected during that day is
+
+$$
+P(\text{infection})=1-(1-\beta)^k.
+$$
+
+This illustrates an important advantage of individual-based models: animals with different contact patterns can experience different infection risks even when they have the same biological susceptibility.
+
+The following graph shows how the probability of infection changes as $\beta$ increases from 0.01 to 1, for different numbers of infectious contacts.
+
+```{r message=FALSE}
+x=seq(0, 1, by = 0.01)  # Theoretical range of Beta values
+k_vals=1:10             # Number of infections contacts
+cols=rainbow(length(k_vals))
+
+plot(x, 1 - (1 - x)^1, type = "l",
+     lwd = 2,
+     col = cols[1],
+     ylim = c(0, 1),
+     xlab = expression(beta),
+     ylab = "Probability of infection",
+     main = expression("Infection probability: " ~ 1-(1-beta)^k),
+     las = 1)
+
+for(i in 2:length(k_vals)){
+  lines(x, 1 - (1 - x)^k_vals[i], lwd = 2, col = cols[i])}
+
+legend("bottomright", legend = paste("k =", k_vals),
+       col = cols, lwd = 2, bty = "n")
+```
+
+### Visualize the epidemic
+
+Although the simulation tracks every animal separately, we can summarize the individual states to obtain population-level epidemic curves.
+
+```{r message=FALSE}
+S_total=colSums(Status==0)
+I_total=colSums(Status==1)
+R_total=colSums(Status==2)
+
+plot(1:nsteps,S_total,type="l", col="darkgreen",
+     lwd=2,  ylim=c(0,N), xlab="Days",
+     ylab="Number of individuals", las=1)
+lines(1:nsteps,I_total,col="orange",lwd=2)
+lines(1:nsteps,R_total,col="blue"  ,lwd=2)
+
+legend("right", legend=c("Susceptible","Infected","Recovered"),
+       col=c("darkgreen","orange","blue"), lwd=2, bty="n")
+```
+
+Notice that the resulting curves look similar to those produced by compartmental models.
+However, these population-level curves are now **summaries of individual trajectories**, rather than the quantities directly simulated by the model.
+
+### Follow a single individual
+
+Because individual identity is retained, we can also investigate the epidemiological history of particular individuals.
+
+```{r message=FALSE}
+if(theta<1){cols=c("darkgreen","orange","blue")}else{cols=c("darkgreen","orange")}
+image(t(apply(Status, 2, rev)), col = cols, axes = FALSE,main = "Matrix Plot")
+axis(1, at=seq(0, 1, length.out=ncol(Status)), labels=1:ncol(Status))
+axis(2, at=seq(0, 1, length.out=nrow(Status)), labels=nrow(Status):1, las=1)
+```
+
+Unlike a compartmental model, we can therefore ask questions such as:
+
+-   How many times was an individual infected?
+-   How long did each infection last?
+-   Which individuals experienced the greatest exposure?
+-   Which contacts were responsible for transmission?
+
+These types of individual-level questions are one of the main reasons for using individual-based models.
+
+::: exercise
+### Exercise 2: Exploring an individual-based transmission model
+
+Use the individual-based model to investigate how disease dynamics depend on both **disease parameters** and **contact structure**.
+
+Modify one parameter at a time and repeat several stochastic simulations.
+
+1.  *Transmission probability (*$\beta$).\
+    Increase and decrease `beta`.
+    How does the probability of transmission during a contact affect epidemic establishment, peak prevalence, and persistence?
+
+2.  *Recovery probability (*$\gamma$).
+    Test different values of `gamma`.
+    Remember that the expected infectious period is approximately $1/\gamma$.
+    What happens when infected animals remain infectious for longer?
+
+3.  *Loss of immunity (*$\theta$).
+    Compare different values of `theta`.
+    What happens when recovered individuals rapidly become susceptible again?
+    What type of compartmental structure does the individual-based model represent when $\theta=0$ or $\theta=1$?
+
+4.  *Population size.* Compare small and large populations while keeping approximately the same initial prevalence and mean number of contacts per individual.
+
+5.  *Probability of infection.*\
+    Replace the probability of infection formula
+
+    $$
+    P(\text{infection})=1-(1-\beta)^k
+    $$
+
+    with a constant probability equal to $\beta$.
+    What plausible scenario does this represent, and how does it affect disease transmission?
+
+6.  *Herd immunity.*\
+    Introduce herd immunity by increasing the number of recovered/resistant ($R$) individuals at the beginning of the simulation (`Status[,1]`).
+    How does this affect epidemic transmission and persistence?
+:::
+
+## Spatial transmission models {#stm}
+
+In the previous individual-based model, every susceptible individual was exposed to the same number of infected individuals, independently of their location.
+However, disease transmission often depends on the spatial proximity between individuals.
+
+We will now extend the individual-based model by assigning each individual a fixed spatial position $(x,y)$.
+Instead of assuming homogeneous mixing, the probability of transmission will decrease with the distance between susceptible and infected individuals.
+
+### Define the spatial environment
+
+Lets fix a random seed again to make the simulation reproducible.
+
+```{r message=FALSE}
+set.seed(123)
+```
+
+We will simulate the same SIRS structure used previously, but now individuals will be distributed within a two-dimensional area.
+`area_size` defines the length of each side of the simulated square environment, so `area_size = 100` creates a $100 \times 100$ spatial area, while `sigma` controls the spatial transmission range: smaller values make transmission decline rapidly with distance, whereas larger values allow infected individuals to influence susceptible individuals over greater distances.
+
+```{r message=FALSE}
+nsteps=100
+N=100
+
+beta=0.3   # S -> I
+gamma=1/7   # I -> R
+theta=1/14  # R -> S
+
+area_size=100
+sigma=10       # Spatial transmission range
+```
+
+Each individual is assigned a random position within a $100 \times 100$ spatial area.
+
+```{r message=FALSE}
+x_pos=runif(N,0,area_size)
+y_pos=runif(N,0,area_size)
+
+plot(x_pos,y_pos, pch=16,
+     xlab="X position",
+     ylab="Y position",
+     xlim=c(0,area_size), ylim=c(0,area_size),
+     asp=1, las=1)
+```
+
+Then we estimate the distance between every pair of individuals from their spatial coordinates.
+
+```{r message=FALSE}
+Coordinates=cbind(x_pos,y_pos)
+Distance=as.matrix(dist(Coordinates))
+```
+
+### Distance-dependent transmission
+
+We assume that the contribution of an infected individual $j$ to the infection probability of a susceptible individual $i$ decreases exponentially with the distance between them:
+
+$$
+p_{ij}=\beta e^{-d_{ij}/\sigma}
+$$
+
+where $d_{ij}$ is the distance between the two individuals ($i$ and $j$) and $\sigma$ controls the spatial range of transmission.
+
+At distance zero, the transmission probability is $\beta$.
+As distance increases, the probability progressively decreases.
+
+> **NOTE:** $\sigma$ determines how rapidly transmission decreases with distance.
+> Small values restrict transmission to nearby individuals, whereas large values allow infected individuals to influence susceptible individuals at greater distances.
+
+If a susceptible individual is simultaneously exposed to several infected individuals, each infected individual contributes independently to its infection risk.
+The combined probability of infection is therefore
+
+$$
+P_i(\text{infection})
+=
+1-\prod_{j=1}^{k}(1-p_{ij}).
+$$
+
+This is similar to the probability used in the previous individual-based model,
+
+$$
+1-(1-\beta)^k,
+$$
+
+but now each infected individual can contribute a different transmission probability depending on its distance from the susceptible individual.
+
+### Initialize the population
+
+As before, the epidemiological state of every individual is stored in a matrix, and five initial infected individuals are defined in the population.
+
+```{r message=FALSE}
+Status_sp=matrix(0,nrow=N,ncol=nsteps)
+
+infected=sample(1:N,5)
+Status_sp[infected,1]=1
+```
+
+We can visualize the initial spatial distribution of susceptible and infected individuals.
+
+```{r message=FALSE}
+cols=c("darkgreen","orange","blue")
+
+plot(x_pos,y_pos, pch=16, col=cols[Status_sp[,1]+1],
+     xlab="X position",  ylab="Y position",
+     xlim=c(0,area_size),  ylim=c(0,area_size),
+     asp=1, las=1)
+
+legend("topright", legend=c("Susceptible","Infected","Recovered"),
+       col=cols, pch=16, bty="n")
+```
+
+### Simulate spatial disease transmission
+
+The recovery and loss-of-immunity processes remain identical to the previous individual-based model.
+The main difference is the transmission process: the infection probability is now calculated separately for each susceptible individual according to its distance from all currently infected individuals.
+
+```{r message=FALSE}
+for(i in 1:(nsteps-1)){
+
+  # Keep previous status (<- optimise the code)
+  Status_sp[,i+1]=Status_sp[,i]
+
+  # 1. Loss of immunity: R -> S
+  R_S=which(Status_sp[,i]==2)
+
+  if(length(R_S)>0){
+    LoI=rbinom(length(R_S),size=1,prob=theta)==1
+    Status_sp[R_S[LoI],i+1]=0
+  }
+
+  # 2. Recovery: I -> R
+  I_R=which(Status_sp[,i]==1)
+
+  if(length(I_R)>0){
+    GoI=rbinom(length(I_R),size=1,prob=gamma)==1
+    Status_sp[I_R[GoI],i+1]=2
+  }
+
+  # 3. Spatial transmission: S -> I
+  I=which(Status_sp[,i+1]==1)
+  S=which(Status_sp[,i+1]==0)
+
+  if(length(I)>0 & length(S)>0){
+
+    for(id in S){
+
+      # Distance from susceptible individual to all infected individuals
+      d=Distance[id,I]
+
+      # Transmission probability from each infected individual
+      p_individual=beta*exp(-d/sigma)
+
+      # Combined probability of infection
+      p_inf=1-prod(1-p_individual)
+
+      # Infection event
+      Status_sp[id,i+1]=rbinom(1,size=1,prob=p_inf)
+    }
+  }
+}
+```
+
+Unlike the previous homogeneous-mixing model, susceptible individuals can now experience very different infection risks depending on their spatial location.
+An individual surrounded by infected individuals will generally have a greater probability of infection than an individual located far away from them.
+
+### Visualize the spatial epidemic
+
+We can inspect the spatial distribution of the population at any point during the simulation.
+
+```{r message=FALSE}
+day_plot=10
+
+plot(x_pos,y_pos,
+     pch=16,
+     col=cols[Status_sp[,day_plot]+1],
+     xlab="X position",
+     ylab="Y position",
+     xlim=c(0,area_size),
+     ylim=c(0,area_size),
+     asp=1,
+     las=1,
+     main=paste("Day",day_plot))
+
+legend("topright",
+       legend=c("Susceptible","Infected","Recovered"),
+       col=cols,
+       pch=16,
+       bty="n")
+```
+
+Although transmission is determined at the individual and spatial levels, we can again summarize the results as population-level epidemic curves.
+
+```{r message=FALSE}
+S_total_sp=colSums(Status_sp==0)
+I_total_sp=colSums(Status_sp==1)
+R_total_sp=colSums(Status_sp==2)
+
+plot(1:nsteps,S_total_sp,
+     type="l",
+     col="darkgreen",
+     lwd=2,
+     ylim=c(0,N),
+     xlab="Days",
+     ylab="Number of individuals",
+     las=1)
+
+lines(1:nsteps,I_total_sp,col="orange",lwd=2)
+lines(1:nsteps,R_total_sp,col="blue",lwd=2)
+
+legend("right",
+       legend=c("Susceptible","Infected","Recovered"),
+       col=c("darkgreen","orange","blue"),
+       lwd=2,
+       bty="n")
+```
+
+The main difference from the previous model is therefore not the disease states themselves, but *how susceptible individuals are exposed to infection*:
+
+$$
+\text{Homogeneous mixing}
+\quad\longrightarrow\quad
+P(\text{infection}) \text{ depends on the total number of infected individuals}
+$$
+
+$$
+\text{Spatial transmission}
+\quad\longrightarrow\quad
+P(\text{infection}) \text{ depends on where infected individuals are located}.
+$$
+
+::: exercise
+### Exercise 3: Exploring spatial disease transmission
+
+Modify one element at a time and examine how the epidemic changes.
+
+1.  *Spatial transmission range (*$\sigma$).\
+    Compare small and large values of `sigma`.
+    How does the distance over which transmission can occur affect epidemic spread?
+
+2.  *Population density.*\
+    Keep `N` constant but change `area_size`.
+    How does concentrating the same population into a smaller area affect transmission?
+
+3.  *Initial location of infected individuals.*\
+    Compare simulations where initially infected individuals are clustered in one area or distributed throughout the population.
+    How does this affect disease spread?
+
+4.  *Movement.*\
+    Instead of keeping the same $(x,y)$ coordinates throughout the simulation, generate new positions for the individuals at each time step.
+    How does increasing spatial mixing affect the epidemic?:
+:::
+
+### Want to try something different?
+
+Try the interactive [Nergal game](https://thentrythis.org/projects/nergal/) developed by [Matthew Silk](https://mattjsilk.weebly.com/) and explore how disease transmission changes under different conditions.
+
+*Can you beat Hector (🐘), Pablo (🐘), and Martin (🐬)?*
+
+## Recommended literature
+
+-   Keeling, M.J.
+    & Rohani, P. (2011).
+    [Modeling infectious diseases in humans and animals, Modeling Infectious Diseases in Humans and Animals](https://doi.org/10.1016/s1473-3099(08)70147-6).
+    Princeton University press.
+
+-   Vynnycky, E.
+    & White, R.G.
+    (2010).
+    [An introduction to infectious disease modelling](https://doi.org/10.1093/eurpub/ckq163).
+    Oxford University Press.
+
+-   Kirkeby, C., Halasa, T., Gussmann, M., Toft, N., Græsbøll, K., 2017.
+    [Methods for estimating disease transmission rates: Evaluating the precision of Poisson regression and two novel methods](https://doi.org/10.1038/s41598-017-09209-x).
+    Scientific Reports.
+
+-   Zadoks, R.N., Allore, H.G., Hagenaars, T.J., Barkema, H.W., Schukken, Y.H., 2002.
+    [A mathematical model of Staphylococcus aureus control in dairy herds](https://doi.org/10.1017/S0950268802007483).
+    Epidemiol.
+
+-   Woudstra, S., Wente, N., Zhang, Y., Leimbach, S., Gussmann, M.K., Kirkeby, C.
+    & Krömker, V., (2023).
+    [Strain diversity and infection durations of Staphylococcus spp. and Streptococcus spp. causing intramammary infections in dairy cows](https://doi.org/10.3168/JDS.2022-22942).
+    Journal of Dairy Science.

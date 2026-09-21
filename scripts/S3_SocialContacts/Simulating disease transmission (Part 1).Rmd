@@ -1,0 +1,368 @@
+---
+title: "Simulating disease transmission (Part 1)"
+author: "Hector Marina"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+<img src="../../logo/logo.png" width="150"/>
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+htmltools::tagList()
+```
+
+## Introduction
+
+This practical introduces the simulation of infectious-disease transmission using compartmental SIR models. We begin with a deterministic formulation to explore how transmission and recovery rates shape epidemic dynamics, and then extend the same biological model to a stochastic framework in which infection and recovery events occur probabilistically.
+
+Throughout the exercises, you will explore how model parameters, initial conditions, pre-existing immunity, and stochasticity influence epidemic establishment, peak infection, and final epidemic size.
+
+1.  [Deterministic transmission models](#Cdtm)
+2.  [Stochastic transmission models](#Cstm)
+3.  [SimInf R-package](#sirp)\
+
+### Required packages
+
+```{r message=FALSE}
+library(MASS)
+library(SimInf)
+```
+
+## Compartimental models {#Cdtm}
+
+This section implements a deterministic compartmental SIR model. The population is divided into three epidemiological states: susceptible ($S$), infected ($I$), and recovered ($R$). The model is initialized with a mostly susceptible population and a small proportion of infected individuals, and then simulated over a fixed number of days.
+
+Define the main simulation parameters, including the duration of the simulation, the time step, and the transmission and recovery rates.
+
+```{r message=FALSE}
+ndays = 100         # Length of the simulation (days)
+dt    = 1           # Length of each simulation step (days)
+time  =seq(0, ndays, by = dt)
+nsteps=length(time) # Total steps to be simulated
+
+beta  = 0.3     # Rate of infection
+gamma = 1/14    # Rate of recovery (14 days to recover)
+
+S=I=R=numeric(nsteps) # Susceptible, Infected and Recover compartments info
+
+```
+
+Set the initial population conditions: susceptible individuals (999/1000), infected individuals (1/1000), and recovered individuals (0/1000). These conditions mimic the introduction of an infection into a population with no pre-existing immunity and no prior vaccination.
+
+```{r message=FALSE}
+S[1]=0.999
+I[1]=0.001
+R[1]=0.000
+```
+
+At each time step, the model calculates how individuals move between compartments according to the transmission rate ($\beta$) and recovery rate ($\gamma$). Susceptible individuals become infected through contact with infected individuals, while infected individuals recover at a rate determined by $\gamma$. Because the model is deterministic, the same initial conditions and parameter values will always produce the same epidemic trajectory.
+
+```{r message=FALSE}
+for(i in 1:(nsteps-1)){
+  S[i+1]=S[i] - (beta*I[i]*S[i])*dt
+  I[i+1]=I[i] + (beta*I[i]*S[i] - gamma*I[i])*dt
+  R[i+1]=R[i]                  + (gamma*I[i])*dt
+}
+```
+
+The simulation stores the proportion of the population in each compartment over time. The resulting dynamics are then visualized in a single figure, showing susceptible individuals in green, infected individuals in orange, and recovered individuals in blue.
+
+```{r message=FALSE}
+plot(time, S, type = "l", lwd = 3, col = "green4", ylim = c(0, 1), 
+     xlab = "Days", ylab = "Proportion of the population",las = 1)
+lines(time, I, lwd = 3, col = "orange")
+lines(time, R, lwd = 3, col = "blue")
+legend("right", legend = c("Susceptible (S)",
+                          "Infected (I)",
+                          "Recovered (R)"),
+         col = c("green4", "orange", "blue"), lwd = 3, bty = "n")
+```
+
+Identify the epidemic peak, defined as the time at which the proportion of infected individuals ($I$) reaches its maximum. The peak represents the greatest simultaneous burden of infection predicted by the model. In a real population, this corresponds to the period when the largest number of individuals are infectious at the same time and when demands on disease-control measures may be greatest. In the deterministic SIR model, the epidemic peak occurs approximately when the susceptible proportion falls to $S = \gamma/\beta = 1/R_0$.
+
+```{r message=FALSE}
+# Identify the epidemic peak
+peak_id  <- which.max(I)
+peak_day <- time[peak_id]
+peak_I   <- I[peak_id]
+peak_S   <- S[peak_id]
+
+# Report peak information
+cat("Peak of infection:\n")
+cat("Day:", peak_day, "\n")
+cat("Proportion infected:", round(peak_I, 3), "\n")
+cat("Proportion susceptible:", round(peak_S, 3), "\n")
+
+# Theoretical susceptible proportion at the epidemic peak
+cat("Expected S at peak (1/R0):", round(gamma / beta, 3), "\n")
+```
+
+Note that the equations used in this simulation are written as
+
+$$
+\frac{dS}{dt} = -\beta IS
+$$
+
+rather than the alternative formulation often encountered in the literature,
+
+$$
+\frac{dS}{dt} = -\beta \frac{IS}{N}.
+$$
+
+Which formulation should be used depends on what $S$, $I$, and $R$ represent. In our simulation, these variables represent the *proportion of the total population* in each compartment. Therefore, the transmission term is written as $-\beta IS$.
+
+If instead $S$, $I$, and $R$ represent the *number of individuals* in each compartment, the population size $N$ must be included in the denominator.
+
+For example, using proportions:
+
+$$
+-\beta IS = -0.3 \times 0.001 \times 0.999 = -0.0002997
+$$
+
+which represents the change in the \*proportion\*\*of susceptible individuals.
+
+Using counts for the same population ($S = 999$, $I = 1$, $N = 1000$):
+
+$$
+-\beta \frac{IS}{N}
+=
+-0.3 \times \frac{1 \times 999}{1000}
+=
+-0.2997
+$$
+
+which represents the change in the **number of susceptible individuals**.
+
+Dividing this value by the total population size gives
+
+$$
+\frac{-0.2997}{1000} = -0.0002997,
+$$
+
+showing that the two formulations are equivalent when the variables are expressed consistently.
+
+::: exercise
+### Exercise 1:
+
+Using the deterministic SIR model above, explore how changes in the model parameters and initial conditions affect the epidemic dynamics. *Before running each simulation, predict what you expect to happen.* Compare the timing and magnitude of the infection peak and the final proportion of the population infected.
+
+1.  *Increase the transmission rate (*$\beta$). What happens when the infection rate increases? Modify `beta` and examine how this affects the speed of transmission, the infection peak, and the final epidemic size.
+
+2.  *Decrease the recovery rate (*$\gamma$). A lower recovery rate means that infected individuals remain infectious for longer ($1/\gamma$ increases). Modify `gamma` and examine how a longer infectious period affects the epidemic.
+
+3.  *Introduce pre-existing immunity.* Until now, the population has contained no recovered or immune individuals. Increase `R[1]` to represent individuals that are already immune, either because of previous infection or vaccination, and adjust `S[1]` accordingly. What happens to the epidemic as the initial proportion of immune individuals increases?
+
+    Remember that the initial conditions must always satisfy:
+
+    $$
+    S[1] + I[1] + R[1] = 1.
+    $$
+
+4.  *Change the initial number of infected individuals.* Compare simulations starting with different values of `I[1]` while keeping $\beta$ and $\gamma$ unchanged. Does changing the initial number of infected individuals change whether an epidemic can occur? How does it affect the timing of the epidemic peak?
+
+5.  *Explore the epidemic threshold (*$R_0$).\
+    Recall that, for this model,
+
+    $$
+    R_0 = \frac{\beta}{\gamma}.
+    $$
+
+    Modify `beta` and/or `gamma` to simulate scenarios in which $R_0 < 1$, $R_0 = 1$, and $R_0 > 1$. What happens to the number of infected individuals in each case?
+
+For each scenario, consider:
+
+-   Does an epidemic occur?
+-   When does the infection peak occur?
+-   What is the maximum proportion of infected individuals?
+-   What proportion of the population remains susceptible at the end?
+-   How do your observations relate to changes in $R_0$?
+:::
+
+## Stochastic transmission models {#Cstm}
+
+Unlike the deterministic model, where a given set of parameters and initial conditions always produces the same epidemic trajectory, the stochastic compartmental model allows infection and recovery events to occur randomly. The expected number of new infections is still determined by the same frequency-dependent transmission term, $\beta IS/N$, but the number that actually occurs during each time step is sampled from a probability distribution. Consequently, repeated simulations with identical parameters can produce different epidemic trajectories.
+
+Set a random seed to make the stochastic simulation reproducible. Using the same seed will generate the same sequence of random events, whereas changing or removing the seed can produce a different epidemic trajectory.
+
+```{r message=FALSE}
+set.seed(123)
+```
+
+Define the duration of the simulation, population size, transmission and recovery rates. In contrast to the previous deterministic example, $S$, $I$, and $R$ represent the number of individuals in each compartment.
+
+```{r message=FALSE}
+nsteps=100
+time  =1:nsteps
+
+beta  = 0.3     # Rate of infection
+gamma = 1/14    # Rate of recovery (14 days to recover)
+
+S=I=R=numeric(nsteps)    # Susceptible, Infected and Recover compartments info
+new_infections=new_recoveries=numeric(nsteps) # New infections and recoveries
+```
+
+Set the initial population conditions: susceptible individuals (995/1000), infectious individuals (5/1000), and recovered individuals (0/1000). Because the compartments now contain counts rather than proportions, their initial values must sum to the total population size ($N=1000$).
+
+```{r message=FALSE}
+N=1000
+S[1]=N - 5
+I[1]=5
+R[1]=0
+```
+
+At each time step, calculate the expected number of new infections and recoveries. The expected number of infections is determined by $\beta IS/N$, whereas the expected number of recoveries is determined by $\gamma I$. The number of events that actually occurs is then randomly sampled from a negative-binomial distribution. This introduces stochastic variation around the expected transmission and recovery dynamics.
+
+```{r message=FALSE}
+for (t in 1:(nsteps-1)) {
+  # New infections
+  mu_inf=beta * (I[t] * S[t]) / N
+  new_infections[t]=min(MASS::rnegbin(1, mu = mu_inf, theta = 1), S[t])
+
+  # New recoveries
+  mu_cure=gamma * I[t]
+  new_recoveries[t]=min(MASS::rnegbin(1, mu = mu_cure, theta = 1), I[t])
+
+  # Update compartments
+  S[t+1] <- S[t] - new_infections[t]
+  I[t+1] <- I[t] + new_infections[t] - new_recoveries[t]
+  R[t+1] <- R[t] + new_recoveries[t]
+}
+```
+
+At each time step, the transmission equation does not directly determine the number of new infections. Instead, it determines the expected number of infections ($\mu_{\mathrm{inf}}$), which is used as the mean of a probability distribution. The actual number of new infections is then randomly sampled from this distribution. The example below illustrates the distribution of possible numbers of new infections during the first simulation step. The red line indicates the expected value ($\mu_{\mathrm{inf}}$), while the blue dotted line shows one randomly sampled outcome that could be used by the stochastic model. The parameter `theta` controls the dispersion of the negative-binomial distribution: smaller values generate greater variability around the expected number of infections, whereas large values approach a Poisson distribution.
+
+```{r message=FALSE}
+mu_inf=beta * (I[1] * S[1]) / N
+inf_dist=MASS::rnegbin(1000,mu = mu_inf,theta = 1)
+
+hist(inf_dist, breaks = seq(-0.5, max(inf_dist) + 0.5, by = 1),
+     main="", xlab = "Possible number of new infections",
+     ylab = "Frequency", col = "lightblue", border = "white")
+abline(v = mu_inf, col = "red", lwd = 3)
+abline(v = inf_dist[1],col = "blue",lwd = 3,lty = 2)
+```
+
+Visualize the resulting stochastic epidemic trajectory. Because the compartments contain numbers of individuals, divide each compartment by the total population size ($N$) to represent the proportion of the population that is susceptible, infectious, or recovered over time.
+
+```{r message=FALSE}
+plot(time, S, type = "l", lwd = 3, col = "green4", ylim = c(0, N), 
+     xlab = "Days", ylab = "Population",las = 1)
+lines(time, I, lwd = 3, col = "orange")
+lines(time, R, lwd = 3, col = "blue")
+legend("right", legend = c("Susceptible (S)",
+                          "Infected (I)",
+                          "Recovered (R)"),
+         col = c("green4", "orange", "blue"), lwd = 3, bty = "n")
+```
+
+::: exercise
+### Exercise 2
+
+The stochastic model can generate different epidemic trajectories even when the parameters and initial conditions remain unchanged. Explore how chance and the model parameters influence the simulated epidemic.
+
+1.  *Repeat the same simulation.*\
+    Run the model several times after removing `set.seed(123)` or changing the seed. Do all simulations produce the same epidemic? Compare the timing and magnitude of the infection peak.
+
+2.  *Change the number of initially infected individuals.*\
+    Compare simulations starting with `I[1] = 1`, `I[1] = 5`, and `I[1] = 20`, adjusting `S[1]` accordingly. How does the initial number of infectious individuals affect the probability that the infection disappears early?
+
+3.  *Modify the transmission rate (*$\beta$). Increase and decrease `beta`. How does this affect the probability of a large epidemic, the infection peak, and the final epidemic size?
+
+4.  *Modify the recovery rate (*$\gamma$). Decrease `gamma` to increase the duration of the infectious period. How does a longer infectious period affect transmission and epidemic persistence?
+
+5.  *Introduce pre-existing immunity.* Increase `R[1]` to represent individuals that are already immune through previous infection or vaccination, and reduce `S[1]` accordingly. How much initial immunity is required before large epidemics become uncommon?
+
+For each scenario, consider:
+
+-   Does the infection establish or disappear?
+-   When does the infection peak occur?
+-   What is the maximum proportion infected?
+-   What is the final epidemic size?
+-   How much do these quantities vary between repeated simulations?
+:::
+
+## SimInf R-package {#sirp}
+
+The stochastic SIR model can also be simulated using existing R packages rather than programming each transmission and recovery event manually. The [SimInf package](https://stewid.github.io/SimInf/index.html) includes a predefined SIR model with the same transitions used above: susceptible individuals become infected at rate $\beta SI/N$, and infected individuals recover at rate $\gamma I$.
+
+```{r message=FALSE}
+library(SimInf)
+```
+
+As in the manually programmed SIR model, the transmission process is defined by two transitions: susceptible individuals become infected according to $\beta SI/N$, and infected individuals recover according to $\gamma I$. The total population size ($N$) is calculated as the sum of the three compartments.
+
+```{r message=FALSE}
+transitions <- c(
+  "S -> beta*S*I/N -> I",
+  "I -> gamma*I -> R",
+  "N <- S+I+R"
+)
+compartments <- c("S", "I", "R")
+```
+
+Next, define the initial conditions and model parameters. As before, each population starts with 995 susceptible, 5 infected, and no recovered individuals, while `beta` and `gamma` determine the transmission and recovery rates. The `mparse()` function combines the transition rules, compartments, parameters, initial conditions, and simulation period into a stochastic transmission model ready to be simulated. Note that the value of the `Rep` parameter indicates how many realisations the simulation will run.
+
+```{r message=FALSE}
+Rep=100 # Replicates
+u0=data.frame( S = rep(995, Rep), I = rep(5, Rep), R = rep(0, Rep) )
+
+model=SimInf::mparse(
+  transitions = transitions,
+  compartments = compartments,
+  gdata = c(beta = 0.3, gamma = 1/14),
+  u0 = u0,
+  tspan = 1:100
+)
+```
+
+Run the model to generate the stochastic epidemic trajectories. This corresponds to the for loop used previously, but the infection and recovery events are now simulated automatically by `SimInf`. The resulting object contains the simulated changes in the susceptible, infected, and recovered compartments over time for all simulated populations.
+
+```{r message=FALSE}
+result=SimInf::run(model)
+result
+```
+
+Finally, visualize the simulated epidemic dynamics. As in the previous plots, the figure shows how the susceptible, infected, and recovered compartments change throughout the simulation. The lines represent the median trajectory across all simulated populations, while the shaded areas show the interquartile range (25th--75th percentiles), illustrating the stochastic variability between simulations.
+
+```{r message=FALSE}
+plot(result)
+```
+
+::: exercise
+### Exercise 3
+
+Choose one of the compartmental models introduced during the class (e.g. SIS, SEIR, or SIRS) and implement it using the simulation approach of your choice.
+
+You may use either:
+
+-   a deterministic formulation,
+-   a stochastic formulation, or
+-   an existing R package such as `SimInf`.
+
+Define the model compartments and transitions, select suitable parameter values and initial conditions, run the simulation, and plot how the compartments change over time.
+
+Briefly explain how the additional transition(s) differ from the SIR model and how they affect the resulting epidemic dynamics.
+:::
+
+### Further exploration
+
+To explore how different compartmental structures and control measures influence epidemic dynamics, visit the interactive [COVID-19 epidemic simulator](https://gabgoh.github.io/COVID/index.html). Try modifying the model structure and parameters, and investigate how interventions such as quarantine can reduce the number of infections, hospitalized patients, and fatalities.
+
+Pay particular attention to how changes in transmission and intervention timing affect the shape and magnitude of the epidemic.
+
+## Recommended literature
+
+-   Keeling, M.J. & Rohani, P. (2011). [Modeling infectious diseases in humans and animals, Modeling Infectious Diseases in Humans and Animals](https://doi.org/10.1016/s1473-3099(08)70147-6). Princeton University press.
+
+-   Vynnycky, E. & White, R.G. (2010). [An introduction to infectious disease modelling](https://doi.org/10.1093/eurpub/ckq163). Oxford University Press.
+
+-   Widgren, S., Bauer, P., Eriksson, R., & Engblom, S. 2019. [SimInf: An R Package for Data-Driven Stochastic Disease Spread Simulations](https://doi.org/10.18637/jss.v091.i12). Journal of Statistical Software.

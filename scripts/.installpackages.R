@@ -10,7 +10,7 @@ if (!grepl("R version 4.5.1", R.version$version.string)) {
 }
 
 # List of packages required for the pipeline
-ListPackages<-c("AlphaSimR" #, "dplyr", "ggplot2", 
+ListPackages<-c("AlphaSimR", "MASS", #, "dplyr", "ggplot2", 
                 )
 for (i in c(1:length(ListPackages))){
   package_name<-ListPackages[i]
