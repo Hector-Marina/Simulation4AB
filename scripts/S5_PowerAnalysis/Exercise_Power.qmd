@@ -1,0 +1,76 @@
+---
+title: "Excercise: Power and design analysis"
+author: "Martin Johnsson"
+format: latex
+---
+
+## The power of a t-test
+
+In the lecture, we used this code to look at the power of a t-test.
+
+First, we define som parameters, including the standardised effect size (Cohen's d).
+
+```{r}
+library(broom)
+library(purrr)
+
+a <- 1840
+b <- 100
+sd <- 191
+
+d <- b / sd
+d
+```
+
+Here is a function to simulate a t-test between two groups, and return the results in a nice data frame format (with `broom::tidy`).
+
+```{r}
+simulate_t <- function(a, b, sd, n_group) {
+  group <- rep(0:1, each = n_group)
+  trait <- a + group * b + rnorm(n_group * 2, 0, sd)
+  tidy(t.test(trait ~ group))
+}
+```
+
+We run this simulation 1000 times (with `purrr::map_dfr`; you could also use a loop).
+
+```{r}
+sim_test <- map_dfr(1:1000, function(x) simulate_t(a, b, sd, 60))
+sim_test
+```
+
+This gives us a data frame of output from simulation replicates, from which we can caluculate any summaries we want.
+
+We estimate the power, Type S error rate and Type M exaggeration ratio at a threshold of p < 0.05.
+
+```{r}
+est_power <- sum(sim_test$p.value < 0.05)/nrow(sim_test)
+est_S_error <- sum(sim_test$p.value < 0.05 & sim_test$estimate > 0)/nrow(sim_test)
+est_M_error <- mean(abs(sim_test$estimate[sim_test$p.value < 0.05])/b)
+
+est_power
+est_S_error
+est_M_error
+```
+
+We can compare that to the power of a t-test from formulas, implemented in R.
+
+```{r}
+power.t.test(delta = b, sd = sd, sig.level = 0.05, power = 0.8)
+```
+
+
+### Exercises
+
+Choose the exercises that interest you.
+
+* **Effect size and sample size**. Make a grid of reasonable effect sizes (expressed as Cohen's d, grams or however you prefer) and sample sizes, and plot the resulting power from simulations and from calculations. How does the power vary with sample size and effect size?
+
+* **Type M and Type S error**. Calculate Type M and S error on the same grid of parameters. When is the risk of type S error high? When is the exaggeration ratio high?
+
+* **Type 1 error rate**. If we simulate two groups with no real difference between them, we can quantify the type 1 error rate. Create a simulation without effect, and estimate the type 1 error rate. Plot the type 1 error rate for different significance thresholds to check that the t-test behaves as you expect. Now change something about the error model -- you can make the variance bigger in one of the groups, change the distribution of the error to a t-distribution or another fat-tailed distribution, etc -- and see how this affects type 1 error rate.
+
+* **Multiple testing**. Expand the simulation to generate a large number of independent variables and apply a t-test to each of them. There are multiple methods to account for such multiple testing, some of them implemented in R's `p.adjust` function. Choose a couple of potential correction methods and check their effect on simultaneous type 1 error rate and power.
+
+* **A model of your own**. Think of an example of a statistical analysis that you have performed or will perform in your own research. Ideally it should be relatively small, so perhaps you need to simplify it somewhat, take away extra predictors and so on. Write simulation code, using functions such as `rnorm`, `sample` etc to generate fake data from with and without the effect that you are interested in measuring. Use this simulation to quantify power and error rates.
+
