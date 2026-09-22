@@ -1,0 +1,493 @@
+---
+title: "Simulations for Animal Breeding Course"
+subtitle: "Simulating breeding programs: Pigs"
+author: "Pablo Dominguez Castano"
+output: html_document
+---
+
+![](../../logo/logo.png)
+
+![](logo.png)
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+
+```{r global-options, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+htmltools::tagList()
+```
+
+```{r setup, message=FALSE, warning=FALSE}
+library(AlphaSimR)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+set.seed(2011)
+```
+
+# Simulating a 3-way crossbreeding system in pigs
+
+-   Lines A and B are selected for average daily gain (ADG).
+-   Line C is selected for loin eye area (LEA).
+-   Dams from line A are crossed with sires from line B to produce AB dams.
+-   AB dams are mated to terminal sires from line C.
+-   The final commercial population is CAB.
+-   ADG and LEA are simulated as genetically independent traits.
+-   Heterosis, breed complementarity and genomic evaluation are outside the base exercise.
+
+# 1. Packages and reproducibility
+
+```{r packages}
+library(AlphaSimR)
+library(ggplot2)
+
+set.seed(2011)
+```
+
+# 2. Founder haplotypes
+
+```{r founder-haplotypes}
+founders <- runMacs(
+  nInd = 600,
+  nChr = 10
+)
+```
+
+# 3. Simulation parameters and biological sexes
+
+```{r simulation-parameters}
+SP <- SimParam$new(founders)
+SP$setSexes("yes_sys")
+```
+
+# 4. Two independent traits
+
+```{r traits}
+SP$addTraitA(
+  nQtlPerChr = 50,
+  mean = c(0.8, 45),
+  var = c(0.01, 9),
+  corA = diag(2),
+  name = c("ADG", "LEA")
+)
+
+SP$setVarE(h2 = c(0.40, 0.30))
+```
+
+# 5. Founder population and three pure lines
+
+```{r pure-lines}
+founderpop <- newPop(
+  founders,
+  simParam = SP
+)
+
+head(founderpop@pheno)
+colMeans(founderpop@pheno)
+
+lines <- list(
+  A = founderpop[1:200],
+  B = founderpop[201:400],
+  C = founderpop[401:600]
+)
+```
+
+# 6. Breeding program parameters
+
+```{r breeding-parameters}
+n_males <- 50
+n_females <- 100
+n_crosses <- 100
+n_offspring <- 2
+n_gen_history <- 40
+```
+
+# 7. Functions to record and summarize populations
+
+```{r helper-functions}
+record_generation <- function(lines, generation, sim_param) {
+  bind_rows(lapply(names(lines), function(line_name) {
+    pop <- lines[[line_name]]
+    BV <- bv(pop, simParam = sim_param)
+
+    data.frame(
+      Generation = generation,
+      Line = line_name,
+      ADG_Phenotype = mean(pop@pheno[, 1]),
+      LEA_Phenotype = mean(pop@pheno[, 2]),
+      ADG_BV = mean(BV[, 1]),
+      LEA_BV = mean(BV[, 2])
+    )
+  }))
+}
+
+population_mean <- function(pop, population_name, sim_param) {
+  BV <- bv(pop, simParam = sim_param)
+
+  data.frame(
+    Population = population_name,
+    ADG_Phenotype = mean(pop@pheno[, 1]),
+    LEA_Phenotype = mean(pop@pheno[, 2]),
+    ADG_BV = mean(BV[, 1]),
+    LEA_BV = mean(BV[, 2])
+  )
+}
+```
+
+# 8. Generation 0
+
+```{r generation-zero}
+history <- record_generation(
+  lines = lines,
+  generation = 0,
+  sim_param = SP
+)
+```
+
+# 9. Forty generations of line-specific selection
+
+```{r selection-loop}
+for (gen in seq_len(n_gen_history)) {
+
+  lines$A <- selectCross(
+    pop = lines$A,
+    nFemale = n_females,
+    nMale = n_males,
+    nCrosses = n_crosses,
+    nProgeny = n_offspring,
+    trait = 1,
+    use = "pheno",
+    selectTop = TRUE,
+    simParam = SP
+  )
+
+  lines$B <- selectCross(
+    pop = lines$B,
+    nFemale = n_females,
+    nMale = n_males,
+    nCrosses = n_crosses,
+    nProgeny = n_offspring,
+    trait = 1,
+    use = "pheno",
+    selectTop = TRUE,
+    simParam = SP
+  )
+
+  lines$C <- selectCross(
+    pop = lines$C,
+    nFemale = n_females,
+    nMale = n_males,
+    nCrosses = n_crosses,
+    nProgeny = n_offspring,
+    trait = 2,
+    use = "pheno",
+    selectTop = TRUE,
+    simParam = SP
+  )
+
+  history <- bind_rows(
+    history,
+    record_generation(lines, gen, SP)
+  )
+}
+```
+
+# 10. Pure lines after selection
+
+```{r selected-lines}
+lineA <- lines$A
+lineB <- lines$B
+lineC <- lines$C
+```
+
+# 11. First cross: A dams × B sires
+
+```{r ab-cross}
+A_dams <- selectInd(
+  pop = lineA,
+  nInd = 100,
+  sex = "F",
+  trait = 1,
+  use = "pheno",
+  simParam = SP
+)
+
+B_sires <- selectInd(
+  pop = lineB,
+  nInd = 50,
+  sex = "M",
+  trait = 1,
+  use = "pheno",
+  simParam = SP
+)
+
+AB <- randCross2(
+  females = A_dams,
+  males = B_sires,
+  nCrosses = 100,
+  nProgeny = 4,
+  simParam = SP
+)
+```
+
+# 12. Terminal cross: AB dams × C sires
+
+```{r terminal-cross}
+AB_dams <- selectInd(
+  pop = AB,
+  nInd = 100,
+  sex = "F",
+  use = "rand",
+  simParam = SP
+)
+
+C_sires <- selectInd(
+  pop = lineC,
+  nInd = 50,
+  sex = "M",
+  trait = 2,
+  use = "pheno",
+  simParam = SP
+)
+
+CAB <- randCross2(
+  females = AB_dams,
+  males = C_sires,
+  nCrosses = 100,
+  nProgeny = 4,
+  simParam = SP
+)
+```
+
+# 13. Response to selection across generations
+
+First, the results are converted to a long format to facilitate plotting.
+
+```{r prepare-history-long}
+history_long <- history |>
+  pivot_longer(
+    cols = c(ADG_Phenotype, LEA_Phenotype, ADG_BV, LEA_BV),
+    names_to = c("Trait", "Measure"),
+    names_pattern = "(ADG|LEA)_(Phenotype|BV)",
+    values_to = "Mean"
+  )
+```
+
+## ADG Phenotypic response
+
+This figure shows the change in mean phenotypic performance for average daily gain across generations in the three pure lines.
+
+```{r plot-adg-phenotype}
+ggplot(
+  subset(
+    history_long,
+    Trait == "ADG" & Measure == "Phenotype"
+  ),
+  aes(
+    x = Generation,
+    y = Mean,
+    color = Line
+  )
+) +
+  geom_line(linewidth = 0.9) +
+  labs(
+    title = "Phenotypic Response for ADG",
+    x = "Generation",
+    y = "Mean ADG",
+    color = "Pure line"
+  ) +
+  theme_classic(base_size = 12)
+```
+
+## ADG Genetic response
+
+This figure shows the change in mean breeding value for average daily gain across generations.
+
+```{r plot-adg-bv}
+ggplot(
+  subset(
+    history_long,
+    Trait == "ADG" & Measure == "BV"
+  ),
+  aes(
+    x = Generation,
+    y = Mean,
+    color = Line
+  )
+) +
+  geom_line(linewidth = 0.9) +
+  labs(
+    title = "Genetic Response for ADG",
+    x = "Generation",
+    y = "Mean Breeding Value for ADG",
+    color = "Pure line"
+  ) +
+  theme_classic(base_size = 12)
+```
+
+## LEA Phenotypic Response
+
+This figure shows the change in mean phenotypic performance for loin eye area across generations in the three pure lines.
+
+```{r plot-lea-phenotype}
+ggplot(
+  subset(
+    history_long,
+    Trait == "LEA" & Measure == "Phenotype"
+  ),
+  aes(
+    x = Generation,
+    y = Mean,
+    color = Line
+  )
+) +
+  geom_line(linewidth = 0.9) +
+  labs(
+    title = "Phenotypic Response for LEA",
+    x = "Generation",
+    y = "Mean LEA",
+    color = "Pure line"
+  ) +
+  theme_classic(base_size = 12)
+```
+
+## LEA Genetic Response
+
+This figure shows the change in mean breeding value for loin eye area across generations.
+
+```{r plot-lea-bv}
+ggplot(
+  subset(
+    history_long,
+    Trait == "LEA" & Measure == "BV"
+  ),
+  aes(
+    x = Generation,
+    y = Mean,
+    color = Line
+  )
+) +
+  geom_line(linewidth = 0.9) +
+  labs(
+    title = "Genetic Response for LEA",
+    x = "Generation",
+    y = "Mean Breeding Value for LEA",
+    color = "Pure line"
+  ) +
+  theme_classic(base_size = 12)
+```
+
+# 14. Comparison of final populations
+
+```{r final-comparison}
+comparison <- bind_rows(
+  population_mean(lineA, "Line A", SP),
+  population_mean(lineB, "Line B", SP),
+  population_mean(lineC, "Line C", SP),
+  population_mean(AB, "AB", SP),
+  population_mean(CAB, "CAB", SP)
+)
+
+comparison
+```
+
+```{r comparison-plot, fig.width=9, fig.height=5}
+comparison |>
+  select(Population, ADG_Phenotype, LEA_Phenotype) |>
+  pivot_longer(-Population, names_to = "Trait", values_to = "Mean") |>
+  mutate(
+    Trait = recode(
+      Trait,
+      ADG_Phenotype = "Average daily gain",
+      LEA_Phenotype = "Loin eye area"
+    )
+  ) |>
+  ggplot(aes(Population, Mean, fill = Population)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~Trait, scales = "free_y") +
+  labs(x = NULL, y = "Phenotypic mean") +
+  theme_classic(base_size = 12)
+```
+
+::: Exercise
+## Activity 1: Traits and heritability
+
+Choose two traits of economic importance in pigs. Find estimates of their mean, phenotypic or additive genetic variance, and heritability in the scientific literature. Use these parameters to replace ADG and LEA in the original simulation.
+
+Run the breeding program using phenotypic selection.
+
+### Questions
+
+- How do the two traits respond to selection?
+- Does the trait with higher heritability respond more clearly to phenotypic selection?
+- How do the simulated results compare with your expectations based on the literature?
+
+
+------------------------------------------------------------------------
+
+## Activity 2: Phenotypic selection vs. random selection
+
+Run the breeding program using phenotypic selection and repeat it using random parent selection (use = "rand"). Keep all other parameters unchanged.
+
+### Questions
+
+- How does the response across generations differ between the two strategies?
+- What happens to the population mean when parents are selected randomly?
+- Why can the phenotype still change between generations under random selection?
+
+------------------------------------------------------------------------
+
+## Activity 3: Selection intensity
+
+Modify the number of males and females selected as parents in each generation. Compare a scenario with few selected parents with one using a larger proportion of the population.
+
+### Questions
+
+- How does selection intensity affect the response to selection?
+- What happens to the genetic and phenotypic variability?
+- What are the potential consequences of repeatedly using only a few parents?
+
+## Activity 4: Genetically correlated traits
+
+In the original simulation, the two traits are genetically independent. Choose two traits for which a genetic correlation has been reported in pigs and find an estimate of that correlation in the scientific literature.
+
+Modify the genetic correlation matrix:
+
+```
+corA <- matrix(
+  c(1,   rg,
+    rg,  1),
+  nrow = 2,
+  byrow = TRUE
+)
+```
+and use it when defining the traits:
+
+```
+SP$addTraitA(
+  nQtlPerChr = 50,
+  mean = c(mean_trait1, mean_trait2),
+  var = c(var_trait1, var_trait2),
+  corA = corA,
+  name = c("Trait1", "Trait2")
+)
+```
+Select animals based only on Trait 1.
+
+### Questions
+
+- What happens to Trait 2 even though it is not directly selected?
+- Does the direction of its response agree with the sign of the genetic correlation?
+- How would the response change if the genetic correlation were close to zero?
+
+:::
+
+# References
+
+-   See, G. M., Mote, B. E., and Spangler, M. L. (2020). Impact of inclusion rates of crossbred phenotypes and genotypes in nucleus selection programs. *Journal of Animal Science*, 98(12), skaa360. <https://doi.org/10.1093/jas/skaa360>
+-   See, G. M., Mote, B. E., and Spangler, M. L. (2021). Selective genotyping and phenotypic data inclusion strategies of crossbred progeny for combined crossbred and purebred selection in swine breeding. *Journal of Animal Science*, 99(3), skab041. <https://doi.org/10.1093/jas/skab041>
+-   See, G. M., Fix. J. S., Schwab, C. R., and Spangler, M. L. (2022). Imputation of non-genotyped F1 dams to improve genetic gain in swine crossbreeding programs. *Journal of Animal Science*, 100(5), skac148. <https://doi.org/10.1093/jas/skac148>
