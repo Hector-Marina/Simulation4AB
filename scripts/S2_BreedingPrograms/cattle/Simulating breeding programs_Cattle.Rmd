@@ -7,7 +7,7 @@ editor_options:
     wrap: sentence
 ---
 
-<img src="../../logo/logo.png" width="150"/>
+<img src="../../../logo/logo.png" width="150"/>
 
 ```{=html}
 <style>
@@ -22,13 +22,16 @@ htmltools::tagList()
 
 ## Introduction
 
-This practical focuses on the simulation of a dairy cattle breeding program using `AlphaSimR`. We will first generate a founder population and then define multiple quantitative traits with favorable and unfavorable genetic relationships. These traits will be incorporated into a simplified dairy cattle breeding program that includes systematic effects, selection, mating, and reproduction across generations. Finally, we will evaluate the response to selection and visualize changes in genetic merit over time.
+This practical focuses on the simulation of a dairy cattle breeding program using `AlphaSimR`.
+We will first generate a founder population and then define multiple quantitative traits with favorable and unfavorable genetic relationships.
+These traits will be incorporated into a simplified dairy cattle breeding program that includes systematic effects, selection, mating, and reproduction across generations.
+Finally, we will evaluate the response to selection and visualize changes in genetic merit over time.
 
-1. [Founder population](#founders)
-2. [Systematic effects and phenotypic records](#phenotypes)
-3. [Dairy cattle breeding program](#breeding)
-4. [Selection across generations](#selection)
-5. [Genetic and phenotypic response to selection](#response)
+1.  [Founder population](#founders)
+2.  [Systematic effects and phenotypic records](#phenotypes)
+3.  [Dairy cattle breeding program](#breeding)
+4.  [Selection across generations](#selection)
+5.  [Genetic and phenotypic response to selection](#response)
 
 ### Required packages
 
@@ -36,7 +39,8 @@ This practical focuses on the simulation of a dairy cattle breeding program usin
 library(AlphaSimR)
 ```
 
-Let's also set a random seed to make the simulation reproducible. Using the same seed will generate the same sequence of random events, whereas changing or removing the seed can produce slightly different outcomes from the simulation.
+Let's also set a random seed to make the simulation reproducible.
+Using the same seed will generate the same sequence of random events, whereas changing or removing the seed can produce slightly different outcomes from the simulation.
 
 ```{r message=FALSE}
 set.seed(123)
@@ -44,9 +48,11 @@ set.seed(123)
 
 ## Founder population {#founders}
 
-We first generate a founder population representing a dairy cattle population. `AlphaSimR` uses the MaCS coalescent simulator to generate chromosome haplotypes while accounting for historical mutation, recombination, and changes in effective population size.
+We first generate a founder population representing a dairy cattle population.
+`AlphaSimR` uses the MaCS coalescent simulator to generate chromosome haplotypes while accounting for historical mutation, recombination, and changes in effective population size.
 
-For cattle, `AlphaSimR` provides a predefined `"CATTLE"` demographic history based on cattle sequence data. We could simulate the 29 bovine autosomes and retain 6,000 segregating sites per chromosome, following parameters similar to those used in previous dairy cattle breeding simulations.
+For cattle, `AlphaSimR` provides a predefined `"CATTLE"` demographic history based on cattle sequence data.
+We could simulate the 29 bovine autosomes and retain 6,000 segregating sites per chromosome, following parameters similar to those used in previous dairy cattle breeding simulations.
 
 ```{r message=FALSE}
 founders=runMacs(
@@ -57,7 +63,8 @@ founders=runMacs(
 )
 ```
 
-> **NOTE:** To reduce computational time during the practical, we simulate 10 chromosomes rather than the complete 29 bovine autosomes and use the generic demographic history implemented in `AlphaSimR`. The objective is to reproduce the genetic processes underlying the breeding program rather than to recreate the complete Holstein genome.
+> **NOTE:** To reduce computational time during the practical, we simulate 10 chromosomes rather than the complete 29 bovine autosomes and use the generic demographic history implemented in `AlphaSimR`.
+> The objective is to reproduce the genetic processes underlying the breeding program rather than to recreate the complete Holstein genome.
 
 ### Define the simulation parameters
 
@@ -73,11 +80,14 @@ SP$setTrackPed(TRUE)       # Store pedigree information across generations
 
 We simulate three traits:
 
-1. **MY305**: 305-day milk yield in kg.
-2. **LSCS**: lactation average somatic cell score.
-3. **MAST**: underlying genetic propensity for clinical mastitis.
+1.  **MY305**: 305-day milk yield in kg.
+2.  **LSCS**: lactation average somatic cell score.
+3.  **MAST**: underlying genetic propensity for clinical mastitis.
 
-Parameters for MY305, LSCS, and clinical mastitis were based on first-lactation Swedish Holstein estimates reported by [Carlén et al. (2004)](https://doi.org/10.3168/jds.S0022-0302(04)73439-6). Mean values were 7,575 kg for MY305 and 0.787 for LSCS, with additive genetic standard deviations of 712.2 kg and 0.1524 and heritabilities of 0.34 and 0.14, respectively. Clinical mastitis had a reported heritability of 0.03 and an incidence of 10.4%. For simulation, mastitis was represented on a standardized liability scale with mean 0 and phenotypic variance 1, giving an additive genetic variance of 0.03.
+Parameters for MY305, LSCS, and clinical mastitis were based on first-lactation Swedish Holstein estimates reported by [Carlén et al. (2004)](https://doi.org/10.3168/jds.S0022-0302(04)73439-6).
+Mean values were 7,575 kg for MY305 and 0.787 for LSCS, with additive genetic standard deviations of 712.2 kg and 0.1524 and heritabilities of 0.34 and 0.14, respectively.
+Clinical mastitis had a reported heritability of 0.03 and an incidence of 10.4%.
+For simulation, mastitis was represented on a standardized liability scale with mean 0 and phenotypic variance 1, giving an additive genetic variance of 0.03.
 
 ```{r message=FALSE}
 trait_mean=c(
@@ -146,7 +156,8 @@ colnames(covA)=rownames(covA)=c("MY305","LSCS","MAST")
 round(covA,3)
 ```
 
-We now assign the three correlated additive traits to the founder genomes. `addTraitA()` uses the same QTL for the three traits, with correlated allelic effects according to `corA`.
+We now assign the three correlated additive traits to the founder genomes.
+`addTraitA()` uses the same QTL for the three traits, with correlated allelic effects according to `corA`.
 
 ```{r message=FALSE}
 SP$addTraitA(
@@ -166,7 +177,9 @@ Calculate the residual variances so the traits have the heritabilities described
 SP$setVarE(h2=h2)
 ```
 
-The heritabilities defined here refer to the founder population. The residual variance subsequently remains fixed, whereas the additive genetic variance may change across generations as a consequence of selection imposed by the breeding program. Therefore, realised heritability does not necessarily need to remain constant throughout the breeding programme.
+The heritabilities defined here refer to the founder population.
+The residual variance subsequently remains fixed, whereas the additive genetic variance may change across generations as a consequence of selection imposed by the breeding program.
+Therefore, realised heritability does not necessarily need to remain constant throughout the breeding programme.
 
 ### Create the base population
 
@@ -183,7 +196,8 @@ pop                   # Display a summary of the population
 
 ### Explore genetic and phenotypic variation
 
-The population now contains genetic values and phenotypes for the three simulated traits. Because environmental variance was defined using `setVarE()`, phenotypes are automatically generated when the population is created.
+The population now contains genetic values and phenotypes for the three simulated traits.
+Because environmental variance was defined using `setVarE()`, phenotypes are automatically generated when the population is created.
 
 For an additive trait, the phenotype of an individual ($P_i$) can be represented as
 
@@ -205,10 +219,10 @@ P=pheno(pop) # Extract phenotypic values for all individuals and traits
 E=P-G        # Calculate environmental deviations
 ```
 
-
 ### Genetic and environmental contributions to MY305
 
-For each animal, the phenotype results from the combination of its genetic value and its environmental deviation. The following plot illustrates this decomposition for the first 20 animals.
+For each animal, the phenotype results from the combination of its genetic value and its environmental deviation.
+The following plot illustrates this decomposition for the first 20 animals.
 
 ```{r message=FALSE}
 # Trait 1 corresponds to MY305
@@ -244,7 +258,9 @@ for(i in 1:length(ids)){
 }
 ```
 
-The purple section represents the genetic value of each animal. The green section represents the environmental deviation and connects the genetic value to the final phenotype (black dots). Environmental deviations can be either positive or negative; therefore, the phenotype can be higher or lower than the genetic value.
+The purple section represents the genetic value of each animal.
+The green section represents the environmental deviation and connects the genetic value to the final phenotype (black dots).
+Environmental deviations can be either positive or negative; therefore, the phenotype can be higher or lower than the genetic value.
 
 ### Distribution of genetic values, environmental deviations and phenotypes
 
@@ -274,12 +290,13 @@ The genetic values of the three traits can be used to verify that the simulated 
 ```{r message=FALSE}
 cor(G) # Genetic correlation matrix observed in the simulated population
 ```
-> **NOTE**: The realized correlations should be close to the target correlations, although they will not necessarily be identical because the simulation contains a finite number of individuals and QTL.
 
+> **NOTE**: The realized correlations should be close to the target correlations, although they will not necessarily be identical because the simulation contains a finite number of individuals and QTL.
 
 ### Establish the farm structure
 
-The founder females are divided among five dairy farms. With systematic sex assignment, 500 females are available, resulting in 100 cows per farm.
+The founder females are divided among five dairy farms.
+With systematic sex assignment, 500 females are available, resulting in 100 cows per farm.
 
 ```{r message=FALSE}
 n_farms=5              # Number of simulated dairy farms
@@ -310,9 +327,12 @@ sires=list(sires)        # Store sires as a list so new male generations can be 
 
 ### Generate the historical population
 
-Before artificial selection begins, we simulate ten generations of random mating to establish a stable population structure with pedigree relationships and genetic relatedness among individuals. Across these generations, recombination, Mendelian sampling, and genetic drift progressively shape the population before directional selection is introduced.
+Before artificial selection begins, we simulate ten generations of random mating to establish a stable population structure with pedigree relationships and genetic relatedness among individuals.
+Across these generations, recombination, Mendelian sampling, and genetic drift progressively shape the population before directional selection is introduced.
 
-In each generation, sires are drawn from a common male population and can be used across all farms. Female offspring remain on their farm of origin, whereas male offspring enter the common sire pool. Throughout this historical period, the population structure is kept approximately constant at 100 cows per farm and 500 males in the common sire population.
+In each generation, sires are drawn from a common male population and can be used across all farms.
+Female offspring remain on their farm of origin, whereas male offspring enter the common sire pool.
+Throughout this historical period, the population structure is kept approximately constant at 100 cows per farm and 500 males in the common sire population.
 
 ```{r message=FALSE}
 n_gen_history=10   # Number of generations before artificial selection
@@ -367,8 +387,8 @@ for(gen in 1:n_gen_history){   # Loop through historical generations
 }
 ```
 
-> **NOTE:** Because sex is randomly assigned, more offspring than required are generated each generation. From these candidates, 100 females per farm and 500 males across farms are randomly retained to maintain a constant population size.
-
+> **NOTE:** Because sex is randomly assigned, more offspring than required are generated each generation.
+> From these candidates, 100 females per farm and 500 males across farms are randomly retained to maintain a constant population size.
 
 After these historical generations, `farms` contains the current female population on each farm and `sires` contains the pool of potential sires.
 
@@ -383,17 +403,19 @@ cat(
   n_sires,"sires in the common sire population.\n"
 )
 ```
-No directional artificial selection has yet been applied. These populations form the starting point for the dairy cattle breeding program.
 
+No directional artificial selection has yet been applied.
+These populations form the starting point for the dairy cattle breeding program.
 
 ## Systematic effects and phenotypic records {#phenotypes}
 
-So far, phenotypes have been generated as the combination of genetic and residual environmental variation. In a real dairy population, however, systematic environmental factors also influence the observed phenotype.
+So far, phenotypes have been generated as the combination of genetic and residual environmental variation.
+In a real dairy population, however, systematic environmental factors also influence the observed phenotype.
 
 For this exercise, we will include two systematic effects:
 
-- **Farm**, representing persistent differences in management and environment among farms.
-- **Parity**, representing systematic changes in production and udder health as cows become older.
+-   **Farm**, representing persistent differences in management and environment among farms.
+-   **Parity**, representing systematic changes in production and udder health as cows become older.
 
 These effects modify the observed phenotype but do not alter the breeding value of the animal.
 
@@ -405,11 +427,13 @@ $$
 
 where $GV_i$ is the genetic value, $F_j$ is the farm effect, $L_k$ is the parity effect, and $E_i$ is the residual environmental deviation.
 
-In `AlphaSimR`, the `fixEff` argument of `setPheno()` is intended for fixed-effect classes used by genomic-selection models rather than for numerically adding a farm or parity effect to the phenotype. We therefore add these systematic effects explicitly to the simulated phenotypic records.
+In `AlphaSimR`, the `fixEff` argument of `setPheno()` is intended for fixed-effect classes used by genomic-selection models rather than for numerically adding a farm or parity effect to the phenotype.
+We therefore add these systematic effects explicitly to the simulated phenotypic records.
 
 ### Generation interval
 
-We assume a generation interval of 4.5 years (see [Stachowicz et al., 2011](https://doi.org/10.3168/jds.2010-3308)). Therefore, ten generations of selection correspond approximately to 45 years of breeding.
+We assume a generation interval of 4.5 years (see [Stachowicz et al., 2011](https://doi.org/10.3168/jds.2010-3308)).
+Therefore, ten generations of selection correspond approximately to 45 years of breeding.
 
 ```{r message=FALSE}
 generation_interval=4.5  # Approximate years between consecutive generations
@@ -420,9 +444,12 @@ years=(0:n_gen_selection)*generation_interval  # Years represented by each gener
 
 ### Parity effects
 
-[Carlén et al. (2004)](https://doi.org/10.3168/jds.S0022-0302(04)73439-6) reported increasing milk yield, LSCS, and mastitis incidence across the first three lactations of Swedish Holstein cows. Mean MY305 increased from 7,575 kg in parity 1 to 8,832 and 9,308 kg in parities 2 and 3. LSCS increased from 0.787 to 0.891 and 0.995, while mastitis incidence increased from 10.4% to 12.1% and 14.9% (see Table 1).
+[Carlén et al. (2004)](https://doi.org/10.3168/jds.S0022-0302(04)73439-6) reported increasing milk yield, LSCS, and mastitis incidence across the first three lactations of Swedish Holstein cows.
+Mean MY305 increased from 7,575 kg in parity 1 to 8,832 and 9,308 kg in parities 2 and 3.
+LSCS increased from 0.787 to 0.891 and 0.995, while mastitis incidence increased from 10.4% to 12.1% and 14.9% (see Table 1).
 
-We use parity 1 as the reference point, expressing the systematic effects of later parities as deviations from it. We also assume that parity 4 is equivalent to parity 3.
+We use parity 1 as the reference point, expressing the systematic effects of later parities as deviations from it.
+We also assume that parity 4 is equivalent to parity 3.
 
 ```{r message=FALSE}
 # Observed mean MY305 for parities 1, 2, and 3=4
@@ -470,7 +497,8 @@ Parity 1 therefore represents the baseline, whereas parities 2, 3 and 4 systemat
 
 ### Farm effects
 
-We also introduce persistent differences among the five farms. These effects are centered around zero so that they modify differences among farms without systematically increasing or decreasing the population mean.
+We also introduce persistent differences among the five farms.
+These effects are centered around zero so that they modify differences among farms without systematically increasing or decreasing the population mean.
 
 The values used here are illustrative rather than estimates from a specific population.
 
@@ -498,9 +526,12 @@ colMeans(farm_effect)
 
 ### Generate observed phenotypic records
 
-To simplify the simulation, we do not model the complete lifetime of individual cows. Instead, parity is treated as a systematic effect on each phenotypic record.
+To simplify the simulation, we do not model the complete lifetime of individual cows.
+Instead, parity is treated as a systematic effect on each phenotypic record.
 
-We assume that each farm contains cows distributed across four parities. The intended proportions are 25%, 25%, 25%, and 25% for parities 1 to 4, respectively. This distribution is kept constant so that changes across generations are driven primarily by genetic selection rather than by changes in herd age structure.
+We assume that each farm contains cows distributed across four parities.
+The intended proportions are 25%, 25%, 25%, and 25% for parities 1 to 4, respectively.
+This distribution is kept constant so that changes across generations are driven primarily by genetic selection rather than by changes in herd age structure.
 
 ```{r message=FALSE}
 extract_records=function(farms,generation){
@@ -563,18 +594,19 @@ The resulting data contain the genetic values and observed phenotypes of every c
 
 We will now apply artificial selection for higher 305-day milk yield.
 
-Selection will be based on the *true genetic value for MY305*. This represents an idealized breeding program in which the genetic merit of every selection candidate is known perfectly.
+Selection will be based on the *true genetic value for MY305*.
+This represents an idealized breeding program in which the genetic merit of every selection candidate is known perfectly.
 
 Because all traits were simulated as additive traits, `AlphaSimR` allows genetic values to be used directly as the selection criterion using `use="gv"`.
 
 We assume that, in each generation:
 
-- the best 50 sires are selected from the common population of 500 males;
-- the best 50 cows are selected as dams within each farm;
-- selection is based only on MY305;
-- selected parents produce the candidates for the next generation;
-- 100 female replacements are retained per farm;
-- 500 males are retained in the common sire population.
+-   the best 50 sires are selected from the common population of 500 males;
+-   the best 50 cows are selected as dams within each farm;
+-   selection is based only on MY305;
+-   selected parents produce the candidates for the next generation;
+-   100 female replacements are retained per farm;
+-   500 males are retained in the common sire population.
 
 ```{r message=FALSE}
 n_selected_sires=50   # Number of breeding sires selected from 500 candidates
@@ -583,7 +615,8 @@ n_selected_dams =50   # Number of breeding cows selected within each farm
 selection_trait=1     # Trait 1 corresponds to MY305
 ```
 
-> **NOTE:** Selection is deliberately based on only one trait. Because MY305 is positively genetically correlated with LSCS and mastitis, selection for increased milk production is expected to produce correlated genetic responses in both udder-health traits.
+> **NOTE:** Selection is deliberately based on only one trait.
+> Because MY305 is positively genetically correlated with LSCS and mastitis, selection for increased milk production is expected to produce correlated genetic responses in both udder-health traits.
 
 ## Selection across generations {#selection}
 
@@ -735,7 +768,8 @@ GV_progress
 
 ### Genetic response
 
-Selection was applied only to MY305. However, because the three traits are genetically correlated, changes are also expected in LSCS and mastitis liability.
+Selection was applied only to MY305.
+However, because the three traits are genetically correlated, changes are also expected in LSCS and mastitis liability.
 
 ```{r message=FALSE}
 par(mfrow=c(1,3))
@@ -766,7 +800,8 @@ plot(years,P_progress[,3], type="b",pch=19,  col="orange",
 par(mfrow=c(1,1))
 ```
 
-Selection should produce a clear increase in MY305. Because MY305 has unfavorable positive genetic correlations with LSCS and mastitis, increases in these traits may occur as correlated responses even though they were not included directly in the selection criterion.
+Selection should produce a clear increase in MY305.
+Because MY305 has unfavorable positive genetic correlations with LSCS and mastitis, increases in these traits may occur as correlated responses even though they were not included directly in the selection criterion.
 
 ### Compare the first and last generations
 
@@ -798,10 +833,7 @@ cat(
 )
 ```
 
-
-
-////////
-### Estimate systematic effects from the simulated phenotypes
+//////// \### Estimate systematic effects from the simulated phenotypes
 
 Because the simulated phenotypic records contain information on farm, parity, and generation, we can use a linear model to test whether the systematic effects introduced into the simulation can be recovered.
 
@@ -826,8 +858,7 @@ Let's fit MY305 using the systematic effects:
 
 $$
 P_{ijkl}=F_j+L_k+G_l+e_{ijkl},
-$$
-where $F_j$ is the farm effect, $L_k$ is the parity effect, and $G_l$ is the generation effect.
+$$ where $F_j$ is the farm effect, $L_k$ is the parity effect, and $G_l$ is the generation effect.
 
 ```{r message=FALSE}
 model_MY=lm(MY305 ~ farm + parity + generation, data=records_all)
@@ -836,75 +867,110 @@ summary(model_MY)
 
 The same approach can be applied to LSCS and mastitis liability.
 
-::: {.exercise}
+::: exercise
 ### Exercise: Exploring alternative breeding strategies
 
-1. *Selection for different traits.*  
-   The current breeding program selects animals only for higher MY305. Repeat the simulation selecting instead for lower LSCS or lower mastitis liability.
+1.  *Selection for different traits.*\
+    The current breeding program selects animals only for higher MY305.
+    Repeat the simulation selecting instead for lower LSCS or lower mastitis liability.
 
-   How does direct selection on each trait affect the genetic and phenotypic response of the other two traits?
+    How does direct selection on each trait affect the genetic and phenotypic response of the other two traits?
 
-2. *Selection intensity.*  
-   Modify the number of selected sires and dams used in each generation. For example, compare a scenario using only a small proportion of the available sires with a scenario using a larger number of sires.
+2.  *Selection intensity.*\
+    Modify the number of selected sires and dams used in each generation.
+    For example, compare a scenario using only a small proportion of the available sires with a scenario using a larger number of sires.
 
-   How does stronger selection affect genetic progress? What would happen to the genetic variability remaining in the population?
+    How does stronger selection affect genetic progress?
+    What would happen to the genetic variability remaining in the population?
 
-   Compare different combinations of selection pressure in males and females. Is increasing selection intensity equally effective in both pathways?
+    Compare different combinations of selection pressure in males and females.
+    Is increasing selection intensity equally effective in both pathways?
 
-3. *Multi-trait selection index.*  
-   In practice, dairy cattle are rarely selected for a single trait. Construct a simple selection index that rewards higher milk production while penalizing higher LSCS.
+3.  *Multi-trait selection index.*\
+    In practice, dairy cattle are rarely selected for a single trait.
+    Construct a simple selection index that rewards higher milk production while penalizing higher LSCS.
 
-   For this exercise, assume a milk value of approximately **4.66 SEK per kg of milk**, based on a recent Swedish conventional milk price. For teaching purposes, also assume a simplified linear penalty of **0.20 SEK per kg of milk for every 0.1-unit increase in LSCS**. 
-   
-   Using the baseline production of 7,575 kg, the approximate penalty per one LSCS unit is therefore
+    For this exercise, assume a milk value of approximately **4.66 SEK per kg of milk**, based on a recent Swedish conventional milk price.
+    For teaching purposes, also assume a simplified linear penalty of **0.20 SEK per kg of milk for every 0.1-unit increase in LSCS**.
 
-   $$
-   \frac{0.20\times7575}{0.1}=15150\ \text{SEK}.
-   $$
+    Using the baseline production of 7,575 kg, the approximate penalty per one LSCS unit is therefore
 
-   A simplified economic selection index can therefore be written as
+    $$
+    \frac{0.20\times7575}{0.1}=15150\ \text{SEK}.
+    $$
 
-   $$
-   I=4.66\,GV_{\mathrm{MY305}}
-   -15150\,GV_{\mathrm{LSCS}}.
-   $$
+    A simplified economic selection index can therefore be written as
 
-   > **NOTE:** This is a deliberately simplified linear economic index for teaching purposes. Real milk-payment systems depend on several milk-quality components and do not apply a constant linear penalty to LSCS.
+    $$
+    I=4.66\,GV_{\mathrm{MY305}}
+    -15150\,GV_{\mathrm{LSCS}}.
+    $$
 
-   `AlphaSimR` allows a function to be supplied to the `trait` argument of `selectInd()`. The function `selIndex()` can therefore be used to combine several traits.
+    > **NOTE:** This is a deliberately simplified linear economic index for teaching purposes.
+    > Real milk-payment systems depend on several milk-quality components and do not apply a constant linear penalty to LSCS.
 
-   For example, define the economic weights as:
+    `AlphaSimR` allows a function to be supplied to the `trait` argument of `selectInd()`.
+    The function `selIndex()` can therefore be used to combine several traits.
 
-   ```r
-  selected_dams=selectInd(
-    farms[[farm]],
-    nInd=n_selected_dams,
-    sex="F",
-    trait=selIndex,                 # It combines several traits in a selection index
-    use="gv",                       # Use genetic values
-    b=c(4.66,-15150,0),             # MY305, LSCS and mastitis weights
-    selectTop=TRUE,
-    simParam=SP
-  )
-  ```
+    For example, define the economic weights as:
+
+    ``` r
+      selected_dams=selectInd(
+     farms[[farm]],
+     nInd=n_selected_dams,
+     sex="F",
+     trait=selIndex,                 # It combines several traits in a selection index
+     use="gv",                       # Use genetic values
+     b=c(4.66,-15150,0),             # MY305, LSCS and mastitis weights
+     selectTop=TRUE,
+     simParam=SP
+      )
+    ```
 :::
-
 
 ## Recommended literature
 
-- Gaynor, R.C., Gorjanc, G. & Hickey, J.M. (2021). [AlphaSimR: an R package for breeding program simulations](https://doi.org/10.1093/g3journal/jkaa017). *G3 Genes|Genomes|Genetics*.
+-   Gaynor, R.C., Gorjanc, G.
+    & Hickey, J.M.
+    (2021).
+    [AlphaSimR: an R package for breeding program simulations](https://doi.org/10.1093/g3journal/jkaa017).
+    *G3 Genes\|Genomes\|Genetics*.
 
-- Carlén, E., Strandberg, E. & Roth, A. (2004). [Genetic parameters for clinical mastitis, somatic cell score, and production in the first three lactations of Swedish Holstein cows](https://doi.org/10.3168/jds.S0022-0302(04)73439-6). *Journal of Dairy Science*.
+-   Carlén, E., Strandberg, E.
+    & Roth, A.
+    (2004).
+    [Genetic parameters for clinical mastitis, somatic cell score, and production in the first three lactations of Swedish Holstein cows](https://doi.org/10.3168/jds.S0022-0302(04)73439-6).
+    *Journal of Dairy Science*.
 
-- Stachowicz, K., Sargolzaei, M., Miglior, F., Schenkel, F.S. 2011. [Rates of inbreeding and genetic diversity in Canadian Holstein and Jersey cattle](https://doi.org/10.3168/jds.2010-3308). *Journal of Dairy Science.*
+-   Stachowicz, K., Sargolzaei, M., Miglior, F., Schenkel, F.S.
+    2011.
+    [Rates of inbreeding and genetic diversity in Canadian Holstein and Jersey cattle](https://doi.org/10.3168/jds.2010-3308).
+    *Journal of Dairy Science.*
 
-- Lillehammer, M., Meuwissen, T.H.E. & Sonesson, A.K. (2011). [A comparison of dairy cattle breeding designs that use genomic selection](https://doi.org/10.3168/jds.2010-3518). *Journal of Dairy Science*.
+-   Lillehammer, M., Meuwissen, T.H.E. & Sonesson, A.K.
+    (2011).
+    [A comparison of dairy cattle breeding designs that use genomic selection](https://doi.org/10.3168/jds.2010-3518).
+    *Journal of Dairy Science*.
 
-- Medrano, J.F., Ahmadi, A. & Casellas, J. (2010). [Dairy Cattle Breeding Simulation Program: A simulation program to teach animal breeding principles and practices](https://doi.org/10.3168/jds.2009-2640). *Journal of Dairy Science*.
+-   Medrano, J.F., Ahmadi, A.
+    & Casellas, J.
+    (2010).
+    [Dairy Cattle Breeding Simulation Program: A simulation program to teach animal breeding principles and practices](https://doi.org/10.3168/jds.2009-2640).
+    *Journal of Dairy Science*.
 
-- Strandén, I., Kantanen, J., Russo, I.-R.M., Orozco-terWengel, P., Bruford, M.W. & Climgen Consortium (2019). [Genomic selection strategies for breeding adaptation and production in dairy cattle under climate change](https://doi.org/10.1038/s41437-019-0207-1). *Heredity*.
+-   Strandén, I., Kantanen, J., Russo, I.-R.M., Orozco-terWengel, P., Bruford, M.W.
+    & Climgen Consortium (2019).
+    [Genomic selection strategies for breeding adaptation and production in dairy cattle under climate change](https://doi.org/10.1038/s41437-019-0207-1).
+    *Heredity*.
 
-- Hansson, I., Bijma, P., Fikse, F. & Rönnegård, L. (2025). [Towards assessing indirect genetic effects in dairy cattle](https://doi.org/10.1186/s12711-025-00988-w). *Genetics Selection Evolution*.
+-   Hansson, I., Bijma, P., Fikse, F.
+    & Rönnegård, L.
+    (2025).
+    [Towards assessing indirect genetic effects in dairy cattle](https://doi.org/10.1186/s12711-025-00988-w).
+    *Genetics Selection Evolution*.
 
-- Bengtsson, C., Stålhammar, H., Thomasen, J.R., Fikse, W.F., Strandberg, E., Eriksson, S. & Johnsson, M. (2025). [Simulation of long-term impact of dairy cattle mating programmes using genomic information at the herd level](https://doi.org/10.1016/j.animal.2025.101498). *Animal*.
-
+-   Bengtsson, C., Stålhammar, H., Thomasen, J.R., Fikse, W.F., Strandberg, E., Eriksson, S.
+    & Johnsson, M.
+    (2025).
+    [Simulation of long-term impact of dairy cattle mating programmes using genomic information at the herd level](https://doi.org/10.1016/j.animal.2025.101498).
+    *Animal*.

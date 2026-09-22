@@ -1,0 +1,653 @@
+---
+title: "Simulating biomarkers and RNA-seq data (Part 1💉)"
+author: "Hector Marina"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+<img src="../../logo/logo.png" width="150"/>
+
+```{=html}
+<style>
+body {
+text-align: justify}
+</style>
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+htmltools::tagList()
+```
+
+## Introduction
+
+Biomarkers 💉 are measurable biological characteristics that can provide information about an animal's physiological status, health, production, or response to its environment.
+
+In livestock, biomarkers may be particularly useful when the phenotype of interest is difficult or expensive to measure directly.
+Feed efficiency is a good example.
+Individual feed intake measurements require specialized equipment and are difficult to obtain routinely in large populations.
+In this sense, milk or blood biomarkers could therefore provide indirect information about feed efficiency and potentially allow animals to be evaluated without measuring individual feed intake.
+
+In this practical, we will simulate a dairy sheep population inspired by the Spanish Assaf breed and investigate whether simulated *blood and milk biomarkers* can discriminate animals with *high and low feed conversion ratios* (see [Marina et al. 2024](https://doi.org/10.3168/jds.2023-23984)).
+
+1.  [Founder population](#founders)
+2.  [Traits and phenotypes](#traits)
+3.  [Breeding across generations](#generations)
+4.  [Feed efficiency measurement](#feed)
+5.  [Biomarker measurement](#biomarkers)
+6.  [Analysis of simulated biomarkers](#analysis)
+
+### Required packages
+
+```{r message=FALSE}
+library(AlphaSimR)
+library(mixOmics)
+```
+
+Let's once again set a random seed to make the simulation reproducible.
+
+```{r message=FALSE}
+set.seed(123)
+```
+
+## Founder population {#founders}
+
+We first generate a founder population representing a sheep population using the MaCS coalescent simulator from `AlphaSimR`.
+To reduce computational time during the practical, we simulate 10 chromosomes and 3000 segregation sites per chromosome.
+
+```{r message=FALSE}
+founders=runMacs(
+  nInd=2000,        # Founder individuals
+  nChr=10,          # Simplified genome
+  segSites=3000,    # Segregating sites per chromosome
+  species="GENERIC"
+)
+```
+
+### Define the simulation parameters
+
+The `SimParam` object stores the genetic architecture, traits, marker information, environmental variance, and other parameters that will be used throughout the breeding program.
+
+```{r message=FALSE}
+SP=SimParam$new(founders)  # Create the simulation-parameter object from the founder genomes
+SP$setSexes("yes_sys")     # Systematically assign males and females to individuals
+SP$setTrackPed(TRUE)       # Store pedigree information across generations
+```
+
+## Traits and phenotypes {#traits}
+
+We simulate four production traits required to calculate feed conversion ratio:
+
+-   Dry matter intake (**DMI**)
+-   Milk yield (**MY**)
+-   Milk fat percentage (**FP**)
+-   Milk protein percentage (**PP**)
+
+In addition, we simulate **20 biomarker traits**:
+
+-   10 blood biomarkers
+-   10 milk biomarkers
+
+Some biomarkers are positively associated with DMI, some negatively associated, and others have no relationship with DMI.
+
+Feed conversion ratio (**FCR**) is **not simulated directly**.
+Instead, it is derived from the simulated phenotypes.
+
+Energy-corrected milk is calculated as:
+
+$$ 
+ECM =MY \times \left[ 0.0071 \times Fat + 0.0043 \times Protein + 0.2224 \right]
+$$ 
+
+and:
+
+$$
+FCR = \frac{DMI}{ECM}
+$$
+
+Lower FCR indicates greater feed efficiency.
+
+
+Parameters for milk yield (**MY**), fat percentage (**FP**), and protein percentage (**PP**) were based on Spanish Assaf estimates reported by [Marina et al. (2022)](https://doi.org/10.3168/jds.2021-20510).
+The study included 1,039 Assaf ewes and reported mean values of 2.89 kg for MY, 5.56% for FP, and 5.05% for PP, with heritabilities of 0.24, 0.067, and 0.352, respectively.
+For dry matter intake (**DMI**), we use a heritability of 0.25, based on the estimate for daily feed intake reported by [Cammack et al. (2005)](https://doi.org/10.2527/2005.834777x).
+
+The mean and phenotypic variation of DMI, and the phenotypic standard deviations of the milk traits, are calibrated for the simulation so that the resulting FCR distribution is approximately consistent with the values observed by [Marina et al. (2024)](https://doi.org/10.3168/jds.2023-23984):
+
+$$
+FCR \approx 1.36 \pm 0.23
+$$
+
+The resulting production-trait parameters are:
+
+| Trait        | Mean | Standard dev  | $h^2$ |
+|--------------|-----:|--------------:|------:|
+| DMI (kg/day) | 3.22 |          0.30 |  0.25 |
+| MY (kg/day)  | 2.89 |          0.35 |  0.24 |
+| FP (%)       | 5.56 |          0.60 | 0.067 |
+| PP (%)       | 5.05 |          0.30 | 0.352 |
+
+The additive genetic variance ($\sigma^2_a$) of each trait is calculated as:
+
+$$
+\sigma^2_a=h^2\sigma^2_p
+$$
+
+```{r message=FALSE}
+production_names=c( "DMI", "MY", "FP",  "PP" )
+production_mean =c(  3.22, 2.89, 5.56,  5.05 )
+production_sd   =c(  0.30, 0.35, 0.60,  0.30 )
+production_h2   =c(  0.25, 0.24, 0.067, 0.352)
+production_varP=production_sd^2
+production_varA=production_h2*production_varP
+
+production_parameters=data.frame(
+  Trait=production_names,
+  Mean=production_mean,
+  Phenotypic_SD=production_sd,
+  h2=production_h2,
+  Additive_variance=production_varA
+)
+
+production_parameters
+```
+
+For the three milk traits, [Marina et al. (2022)](https://doi.org/10.3168/jds.2021-20510) reported the following phenotypic and genomic correlations:
+
+```{r message=FALSE}
+corA_production=matrix(
+  c(
+     1.00,  0.00,  0.00,  0.00,
+     0.00,  1.00, -0.34, -0.52,
+     0.00, -0.34,  1.00,  0.46,
+     0.00, -0.52,  0.46,  1.00
+  ), nrow=4,byrow=TRUE)
+colnames(corA_production)=rownames(corA_production)=production_names
+```
+
+We next simulate *20 additional quantitative traits representing measurable biomarkers* (e.g., 10 biomarkers measured in blood and 10 biomarkers measured in milk). These groups can be interpreted as simplified metabolite modules. For example, several metabolites participating in sugar metabolism may be correlated with one another, whereas another correlated group may represent amino-acid or lipid metabolism. 
+
+The exact biomarker heritabilities ($h^2\approx0.2$) and correlations used here are simulation assumptions. All biomarkers are standardized to a mean of 0 and a phenotypic SD of 1. 
+
+```{r message=FALSE}
+# Names of the 20 biomarkers
+blood_names=paste0("Blood_",1:10)
+milk_names=paste0("Milk_",1:10)
+biomarker_names=c(blood_names,milk_names)
+
+# Combine production traits and biomarkers
+trait_names=c(production_names,biomarker_names)
+trait_mean=c(production_mean,rep(0,20))
+trait_sd=c(production_sd,rep(1,20))
+h2=c(production_h2,rep(0.20,20))
+
+# Additive genetic variance: VA = h2 * VP
+varA=h2*trait_sd^2
+```
+
+Biomarkers belonging to the same group will be moderately correlated, representing metabolites involved in related biological pathways.
+
+```{r message=FALSE}
+# Start with independent traits
+corA=diag(length(trait_names))
+corE=diag(length(trait_names))
+
+colnames(corA)=rownames(corA)=trait_names
+colnames(corE)=rownames(corE)=trait_names
+
+corA[production_names,production_names]=corA_production
+
+# Biomarker groups:
+blocks=list(5:7, 8:11,12:14, # Blood
+          15:17,18:21,22:24) # Milk
+
+# Correlation among biomarkers from the same group
+for(b in blocks){
+  corA[b,b]=0.25
+  corE[b,b]=0.30
+}
+
+diag(corA)=1
+diag(corE)=1
+```
+
+For the relationship between biomarkers and DMI, the first 3 blood and milk biomarkers are positively associated with DMI, whereas the last 3 are negatively associated with DMI. The 4 biomarkers in the middle have no imposed relationship with DMI.
+
+```{r message=FALSE}
+# Position of biomarkers associated with DMI
+positive=c(  5:7, 15:17)
+negative=c(12:14, 22:24)
+
+# Positive correlations with DMI
+corA[1,positive]=corA[positive,1]=0.20
+corE[1,positive]=corE[positive,1]=0.30
+
+# Negative correlations with DMI
+corA[1,negative]=corA[negative,1]=-0.20
+corE[1,negative]=corE[negative,1]=-0.30
+```
+
+### Add the genetic and environmental variation to AlphaSimR
+
+We now assign the additive traits to the founder genomes using `addTraitA()`, with correlated allelic effects according to `corA`.
+
+```{r message=FALSE}
+SP$addTraitA(nQtlPerChr=100,  mean=trait_mean,  
+             var=varA,  corA=corA,  name=trait_names)
+SP$setVarE(h2=h2,  corE=corE)
+pop=newPop(founders,  simParam=SP)
+```
+
+Represent the correlation matrix used for the simulations:
+```{r message=FALSE}
+heatmap(corA, Colv = NA, Rowv = NA, symm = TRUE, revC = TRUE)
+```
+
+## Breeding across generations {#generations}
+
+We will now establish the breeding population that will be used to generate the base population in which we will perform our biomarker experiment our biomarker experiment.
+
+From the founder population, we randomly select:
+
+- **1,000 ewes** for the dairy farm;
+- **100 rams** for the selection centre.
+
+```{r message=FALSE}
+# Separate females and males from the founder population
+founder_ewes=pop[pop@sex=="F"]
+founder_rams=pop[pop@sex=="M"]
+
+# Establish the dairy farm with 1,000 ewes
+farm=selectInd(
+  founder_ewes,
+  nInd=1000,
+  sex="F",
+  use="rand",
+  simParam=SP
+)
+
+# Establish the selection centre with 100 rams
+ram_center=selectInd(
+  founder_rams,
+  nInd=100,
+  sex="M",
+  use="rand",
+  simParam=SP
+)
+```
+
+
+### Generate the historical population
+
+We then simulate 10 generations of random breeding. In each generation:
+
+- 10 rams are randomly selected from the 100 rams in the selection centre.
+- The 1,000 farm ewes are randomly mated with these rams.
+- Two offspring are generated per mating to provide enough males and females for replacement.
+- 1,000 female offspring are randomly retained to form the next farm generation.
+- 100 male offspring are randomly retained to replace the ram population.
+
+Thus, the farm and selection-centre population sizes remain constant across generations.
+
+```{r message=FALSE}
+n_generations=10   # Number of generations
+n_ewes=1000        # Ewes maintained on the farm
+n_rams=100         # Rams maintained in the selection centre
+n_breeding_rams=10 # Rams used for breeding each generation
+
+for(gen in 1:n_generations){
+
+  # Randomly select 10 breeding rams
+  breeding_rams=selectInd(
+    ram_center,
+    nInd=n_breeding_rams,
+    sex="M",
+    use="rand",
+    simParam=SP
+  )
+
+  # Generate offspring from the 1,000 farm ewes
+  offspring=randCross2(
+    females=farm,
+    males=breeding_rams,
+    nCrosses=n_ewes,
+    nProgeny=2,
+    simParam=SP
+  )
+
+  # Separate female and male offspring
+  female_candidates=offspring[offspring@sex=="F"]
+  male_candidates=offspring[offspring@sex=="M"]
+
+  # Randomly retain 1,000 females for the next farm generation
+  farm=selectInd(
+    female_candidates,
+    nInd=n_ewes,
+    sex="F",
+    use="rand",
+    simParam=SP
+  )
+
+  # Randomly retain 100 males for the next ram generation
+  ram_center=selectInd(
+    male_candidates,
+    nInd=n_rams,
+    sex="M",
+    use="rand",
+    simParam=SP
+  )
+}
+
+cat(
+  "After",n_generations,"historical generations, the farm population contains", farm@nInd,"dams and the ram center contains ",ram_center@nInd,"rams in the common ram population.\n"
+)
+```
+
+> **NOTE:** No directional artificial selection has been applied.
+
+
+## Feed efficiency measurement {#feed}
+
+After 10 generations of random breeding, the farm contains **1,000 ewes**.
+
+We now extract the phenotypic values of all animals in the farm and calculate their feed conversion ratio (**FCR**).
+
+Remember that FCR was not directly simulated in `AlphaSimR`. Instead, it is derived from dry matter intake (**DMI**) and energy-corrected milk (**ECM**):
+
+$$
+FCR=\frac{DMI}{ECM}
+$$
+
+where:
+
+$$ 
+ECM=MY\times \left[0.0071\times Fat+ 0.0043\times Protein+ 0.2224 \right] 
+$$
+
+Milk fat and protein were simulated as percentages, whereas the ECM equation requires values in g/kg. Therefore:
+
+$$
+1\%=10\;g/kg
+$$
+
+### Extract the phenotypes
+
+We first extract all phenotypic information stored in `AlphaSimR` for the 1,000 ewes. The table contains the four production traits and the 20 simulated biomarkers for every ewe.
+
+```{r message=FALSE}
+P=pheno(farm)                          # Extract phenotypes
+colnames(P)=trait_names                # Add trait names
+farm_records=data.frame(ID=farm@id, P) # Create a data frame
+head(farm_records)
+```
+
+### Calculate ECM and FCR
+```{r message=FALSE}
+farm_records$ECM=farm_records$MY*(
+  0.0071*(farm_records$FP*10)+0.0043*(farm_records$PP*10)+0.2224)
+
+farm_records$FCR=farm_records$DMI/farm_records$ECM
+
+cat("FCR ≈",round(mean(farm_records$FCR),2),
+  "(",round(sd(farm_records$FCR),2),")\n")
+```
+
+Measuring feed intake in all 1,000 animals would be expensive. We therefore first randomly select 200 ewes from the farm to participate in the feed intake experiment and then from them we will select extreme phenotypes to participate in the biomarker experiment.
+
+```{r message=FALSE}
+n_ids=200
+sel_feedintake=sample(1:nrow(farm_records),n_ids)
+
+hist(farm_records$FCR, breaks=25, col="lightblue",
+  xlab="Feed conversion ratio (FCR)",
+  ylab="Number of ewes"
+)
+
+rug(farm_records$FCR[sel_feedintake], ticksize=0.05, col="darkred")
+```
+
+The histogram represents the FCR distribution of the complete farm population, whereas the marks indicate the 200 randomly selected ewes that will be phenotyped in greater detail.
+
+### Create the experimental dataset
+
+We now retain only the 200 selected animals and their phenotypic information.
+
+```{r message=FALSE}
+study_records=farm_records[sel_feedintake,]
+```
+
+
+## Biomarker measurement {#biomarkers}
+
+The 20 biomarkers already included in `AlphaSimR` were generated with a known "biological structure". Some were positively associated with DMI, some negatively associated, and some had no relationship with DMI. However, real metabolomic experiments usually measure many additional biological features that are not related to the phenotype of interest.
+
+We will therefore add another 30 background biomarkers, following approximately Normal distributions.
+Lets start by generating a random correlation between these 30 new biomarkers
+
+```{r message=FALSE}
+n_background=30
+
+# Random correlation matrix
+corA2=matrix(rnorm(n_background^2), nrow=n_background)
+corA2=cov2cor(crossprod(corA2))
+
+round(corA2[1:6,1:6],2)
+```
+
+Because the correlation matrix was generated randomly, some background biomarkers are positively correlated and others negatively correlated.
+
+We now generate the measurements for the 200 ewes using a multivariate Normal distribution.
+
+```{r message=FALSE}
+# Generate normally distributed values
+Z=matrix(rnorm(nrow(study_records)*n_background),
+         nrow=nrow(study_records), ncol=n_background)
+
+# Impose the correlation
+background= Z%*%chol(corA2)
+
+colnames(background)=paste0("Background_",1:n_background)
+```
+
+The background biomarkers are then added to the experimental dataset, and we explore the phenotypic correlations among traits and biomarkers.
+
+```{r message=FALSE}
+study_records2=cbind(study_records,background)
+heatmap(cor(study_records2[,-1]), Colv = NA, Rowv = NA, symm = TRUE, revC = TRUE)
+```
+
+> **NOTE:** In our simulation, biomarkers are normally distributed for simplicity. In real datasets, preprocessing may be necessary: log transformation can be appropriate for positive, right-skewed variables (see [Grund et al., 2010](https://doi.org/10.1097/COH.0b013e32833ed742)), whereas CLR or other compositional-data transformations may be required when measurements represent relative abundances.
+
+
+## Analysis of simulated biomarkers {#analysis}
+
+We now investigate whether the simulated biomarkers can discriminate animals with **high and low feed conversion ratios (FCR)**.
+
+From the 200 ewes included in the experiment, we select the:
+
+- **25 animals with the lowest FCR** → more feed efficient
+- **25 animals with the highest FCR** → less feed efficient
+
+This creates two clearly divergent groups, similar to the approach used by [Marina et al. (2024)](https://doi.org/10.3168/jds.2023-23984).
+
+### Select animals with extreme FCR
+
+```{r message=FALSE}
+# Order animals according to FCR and select the 50 extreme individuals
+ord=order(study_records2$FCR)
+low=ord[1:25]
+high=ord[(nrow(study_records2)-24):nrow(study_records2)]
+
+# Create the final dataset
+biomarker_data=rbind(study_records2[low,],study_records2[high,])
+
+# Define the FCR groups
+biomarker_data$FCR_group=factor(c(rep("Low",25),rep("High",25)),
+                                levels=c("Low","High"))
+```
+
+### Prepare the biomarker matrix
+
+The analysis will include the **50 biomarkers** measured in each animal:
+
+- 20 biologically structured biomarkers simulated in `AlphaSimR`;
+- 30 unrelated background biomarkers.
+
+Production traits such as DMI, MY, FP, and PP are not included as predictors.
+
+```{r message=FALSE}
+all_biomarkers=c(biomarker_names, paste0("Background_",1:30))
+X=as.matrix(biomarker_data[,all_biomarkers])
+Y=biomarker_data$FCR_group
+```
+
+### Partial least squares discriminant analysis
+
+Partial least squares discriminant analysis (**PLS-DA**) is a supervised multivariate method that identifies combinations of variables that maximize the separation between predefined groups. This approach is commonly used to analyse high-dimensional biomarker data.
+
+```{r message=FALSE}
+plsda_model=mixOmics::plsda(X,Y,ncomp=2,scale=TRUE)
+```
+
+### Visualize the PLS-DA
+
+The first two PLS components summarize combinations of biomarkers that contribute to the discrimination between the two FCR groups.
+
+```{r}
+mixOmics::plotIndiv(plsda_model,comp=c(1,2),
+  group=Y, ind.names=FALSE, ellipse=TRUE, legend=TRUE,
+    title="PLS-DA: High and low FCR groups")
+```
+
+Greater separation between the two groups indicates that the combined biomarker profile contains information associated with feed efficiency.
+
+
+### Classification of the animals
+
+We can also use the fitted PLS-DA model to assign each animal to the high- or low-FCR group according to biomarker information.
+
+```{r message=FALSE}
+pred=predict(plsda_model,X)
+predicted_group=pred$class$max.dist[,2]
+table(Observed=Y,Predicted=predicted_group)
+```
+
+This represents the **apparent classification accuracy** (~95%) obtained using the same animals used to fit the model. Because the model is evaluated on the training data, this value will generally be optimistic. Independent validation or cross-validation would be required to estimate predictive accuracy in new animals.
+
+### Which biomarkers contribute most to the separation?
+
+PLS-DA provides a **Variable Importance in Projection (VIP)** score describing the contribution of each biomarker to the model. 
+Variables with VIP values greater than approximately 1 are commonly considered important contributors to the discrimination.
+
+```{r message=FALSE}
+vip_matrix=vip(plsda_model)
+
+# Average importance across the first two components
+vip_score=rowMeans(vip_matrix[,1:2,drop=FALSE])
+vip_results=data.frame(Biomarker=names(vip_score),VIP=vip_score)
+vip_results=vip_results[order(vip_results$VIP,decreasing=TRUE),]
+
+head(vip_results,15)
+```
+
+>**NOTE:** Because we know the structure used to generate the simulated data, we can evaluate whether the biomarkers identified by PLS-DA correspond to variables truly associated with DMI or instead reflect spurious associations arising by chance.
+
+
+::: exercise
+### Exercises
+
+#### 1. Explore individual biomarkers
+
+Select four biomarkers:
+
+- one simulated with a positive relationship with DMI;
+- one simulated with a negative relationship with DMI;
+- one simulated with no relationship with DMI;
+- one background biomarker.
+
+For each biomarker:
+
+1. Calculate its correlation with DMI and FCR.
+2. Plot its distribution in the high- and low-FCR groups.
+3. Test whether its mean differs between the two groups.
+
+Do the observed relationships correspond to the relationships used to simulate the data?
+
+Can a background biomarker appear associated with FCR simply by chance? Why?
+
+
+#### 2. Modify the biomarker–phenotype relationship
+
+The current simulation assumes positive and negative relationships between some biomarkers and DMI.
+
+Modify the magnitude of these correlations and repeat the simulation. For example, compare:
+
+$$
+r=0,\quad |r|=0.10,\quad |r|=0.30,\quad |r|=0.50
+$$
+
+Compare the PLS-DA plots and VIP scores. How does increasing the correlation affect separation of the FCR groups? Are positively correlated biomarkers the only variables useful for discrimination?
+
+#### 3. Training and testing populations
+
+The current PLS-DA model is fitted and evaluated using the same animals. Therefore, the reported classification accuracy may be very optimistic.
+
+Divide the extreme-FCR animals into:
+
+- a **training population** used to fit the PLS-DA;
+- a **testing population** that is not used to fit the model.
+
+Use `predict()` to classify the animals in the testing population. How much did the accuracy dropped in the testing population? Which biomarkers remain important when the model is evaluated on independent animals?
+
+
+#### 4. Sample size and experimental design
+
+Repeat the biomarker experiment using different numbers of animals with measured feed intake, for example:
+
+$$
+n=100,\quad200,\quad400,\quad800
+$$
+
+You can also change the number of extreme animals retained for biomarker analysis, for example:
+
+$$
+10,\quad25,\quad50,\quad100
+$$
+
+For each scenario:
+
+1. fit the PLS-DA;
+2. divide the animals into training and testing populations;
+3. calculate classification accuracy;
+
+Does increasing sample size improve classification accuracy? What is the effect of selecting only very extreme animals? Is measuring more animals always necessary, or can an appropriate experimental design compensate for a smaller sample size?
+
+**Challenge:** Identify a combination of sample size and number of extreme animals that provides good prediction while minimising the number of animals that need expensive feed-intake and biomarker measurements.
+:::
+
+## Recommended literature
+
+-   Gaynor, R.C., Gorjanc, G.
+    & Hickey, J.M.
+    (2021).
+    [AlphaSimR: an R package for breeding program simulations](https://doi.org/10.1093/g3journal/jkaa017).
+    *G3 Genes\|Genomes\|Genetics*.
+
+-   Grund, B.
+    & Sabin, C.
+    (2010).
+    [Analysis of biomarker data: logs, odds ratios, and receiver operating characteristic curves](https://doi.org/10.1097/COH.0b013e32833ed742).
+    *Current Opinion in HIV and AIDS*.
+
+-   Marina, H., Arranz, J.J., Suárez-Vega, A., Pelayo, R., Gutiérrez-Gil, B., Toral, P.G., Hervás, G., Frutos, P. & Fonseca, P.A.S. (2024).
+    [Assessment of milk metabolites as biomarkers for predicting feed efficiency in dairy sheep](https://doi.org/10.3168/jds.2023-23984).
+    *Journal of Dairy Science*.
+
+-   Foldager, L., Gaillard, C., Sørensen, M.T., Larsen, T., Matthews, E., O'Flaherty, R., Carter, F., Crowe, M.A., Grelet, C., Salavati, M., Hostens, M., Ingvartsen, K.L., Krogh, M.A.
+    & GplusE Consortium (2020).
+    [Predicting physiological imbalance in Holstein dairy cows by three different sets of milk biomarkers](https://doi.org/10.1016/j.prevetmed.2020.105006).
+    *Preventive Veterinary Medicine*.
+    
+    
+    
