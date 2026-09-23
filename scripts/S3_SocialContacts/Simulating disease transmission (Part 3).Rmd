@@ -649,7 +649,7 @@ Because heritability is low and only a fraction of the herd originates from the 
 
 $$
   Y_{\mathrm{exp}}=N\bar{Y}(1-0.30\bar{P}),
-  $$
+$$
 
 where $\bar{Y}$ is the average production per animal and $\bar{P}$ is the mean prevalence of infection.
 
@@ -657,7 +657,7 @@ Relative to a disease-free population, expected production can therefore be expr
 
 $$
   Y_{\%}=(1-0.30\bar{P})\times100,
-  $$
+$$
 
 where 100% represents the expected production in the absence of infection.
 
