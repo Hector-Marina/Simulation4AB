@@ -1,0 +1,875 @@
+---
+title: "Simulating biomarkers and RNA-seq data (power analysis)"
+author: "Hector Marina"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE)
+htmltools::tagList()
+```
+
+## Introduction
+
+This exercise builds on the previous model of biomarkers and RNA-seq, adding a section on power analysis at the end. The prior sections about the model are repeated here, so that you follow what is going on. 
+
+### Required packages
+
+```{r message=FALSE}
+library(AlphaSimR)
+#BiocManager::install("DESeq2")
+library(DESeq2) 
+```
+
+Let's once again set a random seed to make the simulation reproducible.
+
+```{r message=FALSE}
+set.seed(123)
+```
+
+## Founder population {#founders}
+
+We first generate a founder population representing a **simplified horse population** using the MaCS coalescent simulator implemented in `AlphaSimR`.
+To reduce computational time during the practical, we simulate 10 chromosomes and 3000 segregating sites per chromosome.
+
+```{r message=FALSE}
+founders=runMacs(
+  nInd=2000,        # Founder individuals
+  nChr=10,          # Simplified genome
+  segSites=3000,    # Segregating sites per chromosome
+  species="GENERIC"
+)
+```
+
+### Define the simulation parameters
+
+The `SimParam` object stores the genetic architecture, traits, environmental variance, and other parameters that will be used throughout the simulated horse population.
+
+```{r message=FALSE}
+SP=SimParam$new(founders)  # Create the simulation-parameter object
+SP$setSexes("yes_sys")     # Systematically assign males and females
+SP$setTrackPed(TRUE)       # Store pedigree information across generations
+```
+
+## Traits and phenotypes {#traits}
+
+We simulate two traits:
+
+-   Physical performance (**Perf**)
+-   Liability to severe equine asthma (**Asthma**)
+
+Both traits are simulated on a standardized continuous scale, with a mean of 0 and a phenotypic standard deviation of 1.
+Higher values of **Asthma** represent greater liability to develop severe equine asthma.
+
+Physical performance is assumed to have a heritability of $h^2=0.20$.
+Asthma liability is assigned a lower heritability of $h^2=0.05$ as a conservative simulation assumption.
+
+```{r message=FALSE}
+trait_names=c("Perf","Asthma")
+trait_mean=c(0,0)
+trait_sd=c(1,1)
+h2=c(0.20,0.05)
+
+varP=trait_sd^2
+varA=h2*varP
+varE=varP-varA
+
+trait_parameters=data.frame(
+  Trait=trait_names,
+  Mean=trait_mean,
+  Phenotypic_SD=trait_sd,
+  h2=h2,
+  Additive_variance=varA
+)
+
+trait_parameters
+```
+
+We assume that physical performance and asthma liability are positively genetically correlated \$ r\_{Perf,Asthma}=0.50 \$.
+Thus, horses with greater physical performance tend to have higher liability to severe asthma.
+Additionally, the residual correlation is calibrated so that the expected phenotypic correlation between the two traits is $+0.30$
+
+```{r message=FALSE}
+target_corP=0.30
+corA=matrix(c(1.00,0.50,0.50, 1.00),nrow=2,byrow=TRUE)
+
+covA=corA[1,2]*sqrt(varA[1]*varA[2])
+corE12=(target_corP*trait_sd[1]*trait_sd[2]-covA)/
+       sqrt(varE[1]*varE[2])
+
+corE=matrix(c(1.00,corE12,corE12,1.00),nrow=2,byrow=TRUE)
+
+colnames(corA)=rownames(corA)=trait_names
+colnames(corE)=rownames(corE)=trait_names
+
+round(corA,2)
+round(corE,2)
+```
+
+In addition, we simulate **500 quantitative traits representing latent gene-expression levels**.
+At this stage, gene expression is simulated on a continuous Normal scale.
+In the RNA-seq sequencing section, these latent expression values will be converted into RNA-seq read counts.
+
+The relationship between each gene and asthma liability is randomly generated.
+To represent the expectation that most genes have weak or moderate associations and relatively few have very strong associations, gene--asthma correlations are sampled from a symmetric beta distribution transformed to the interval $[-1,1]$.
+
+The 500 genes are also allowed to be correlated with one another.
+Part of this correlation arises because they share a relationship with asthma, while an additional small random component represents other shared biological processes.
+
+For simplicity, gene-expression traits are assigned a heritability of $h^2=0.20$.
+
+```{r message=FALSE}
+n_genes=500
+gene_names=paste0("Gene_",1:n_genes)
+
+# Save the correlation matrices already defined for Perf and Asthma
+corA_main=corA
+corE_main=corE
+
+# Random gene-Asthma correlations between -1 and 1
+# Most values are concentrated around zero
+gene_asthma_cor=2*rbeta(n_genes,5,5)-1
+
+# Additional random component creating correlations among genes
+gene_background=runif(n_genes,-0.25,0.25)*
+                sqrt(1-gene_asthma_cor^2)
+
+# Add the 500 expression traits
+trait_names=c(trait_names,gene_names)
+trait_mean=c(trait_mean,rep(0,n_genes))
+trait_sd=c(trait_sd,rep(1,n_genes))
+h2=c(h2,rep(0.20,n_genes))
+
+varA=h2*trait_sd^2
+varE=(1-h2)*trait_sd^2
+```
+
+We next construct the genetic and residual correlation matrices by adding `gene_asthma_cor` and `gene_background` values to the `corA` and `corE` matrices.
+Because asthma is positively correlated with physical performance, genes positively associated with asthma will also tend to be positively associated with performance, and vice versa.
+
+```{r message=FALSE}
+n_traits=length(trait_names)
+genes=3:n_traits
+
+corA=diag(n_traits)
+corE=diag(n_traits)
+
+# Preserve Perf-Asthma relationships
+corA[1:2,1:2]=corA_main
+corE[1:2,1:2]=corE_main
+
+# Gene relationships with Asthma
+corA[2,genes]=corA[genes,2]=gene_asthma_cor
+corE[2,genes]=corE[genes,2]=gene_asthma_cor
+
+# Induced relationships with physical performance
+corA[1,genes]=corA[genes,1]=corA_main[1,2]*gene_asthma_cor
+corE[1,genes]=corE[genes,1]=corE_main[1,2]*gene_asthma_cor
+
+# Random correlations among gene-expression traits
+gene_cor=outer(gene_asthma_cor,gene_asthma_cor)+
+         outer(gene_background,gene_background)
+
+diag(gene_cor)=1
+
+corA[genes,genes]=gene_cor
+corE[genes,genes]=gene_cor
+
+colnames(corA)=rownames(corA)=trait_names
+colnames(corE)=rownames(corE)=trait_names
+```
+
+The simulated gene--asthma correlations can be visualized to confirm that most genes have relatively weak relationships with asthma while fewer genes show stronger positive or negative associations.
+
+```{r message=FALSE}
+hist(gene_asthma_cor,
+     breaks=30,
+     col="lightblue",
+     xlab="Correlation with asthma liability",
+     main="Gene-Asthma correlations")
+```
+
+### Add the genetic and environmental variation to AlphaSimR
+
+We now assign the additive traits to the founder genomes using `addTraitA()`, with correlated allelic effects according to `corA`.
+
+```{r message=FALSE}
+SP$addTraitA(nQtlPerChr=100,  mean=trait_mean,  
+             var=varA,  corA=corA,  name=trait_names)
+SP$setVarE(h2=h2,  corE=corE)
+pop=newPop(founders,  simParam=SP)
+```
+
+We can visualize the additive genetic correlation matrix (`corA`) used in the simulation:
+
+```{r message=FALSE}
+heatmap(corA, Colv = NA, Rowv = NA, symm = TRUE, revC = TRUE)
+```
+
+## Breeding across generations {#generations}
+
+We will now establish the breeding population that will be used to generate the base population in which we will perform the RNA-seq experiment.
+
+From the founder population, we randomly select:
+
+-   **100 mares** representing privately owned horses;
+-   **100 stallions** representing a stallion selection centre.
+
+```{r message=FALSE}
+# Separate females and males from the founder population
+founder_mares=pop[pop@sex=="F"]
+founder_stallions=pop[pop@sex=="M"]
+
+# Select 100 mares
+mares=selectInd(founder_mares,
+                nInd=100,sex="F",use="rand",simParam=SP)
+
+# Select 100 stallions
+stallion_center=selectInd(founder_stallions,
+                          nInd=100,sex="M",use="rand",simParam=SP)
+```
+
+### Generate the historical population
+
+We now simulate **10 generations of selection for physical performance** using the phenotype.
+
+Before selection begins, we store the original population of 100 mares and 100 stallions as **generation 0**.
+This population will later be compared with the population obtained after 10 generations of selection.
+
+In each generation:
+
+-   The **20 stallions with the highest physical-performance phenotype** are selected for breeding.
+-   100 crosses\*\* are generated between the mares and the 20 selected stallions.
+-   Four offspring are generated per mating to provide enough male and female replacement candidates.
+-   The **100 female offspring with the highest performance phenotype** are retained as replacement mares.
+-   The **100 male offspring with the highest performance phenotype** are retained as replacement stallions.
+
+Thus, both the mare and stallion populations are selected for physical performance while their population sizes remain constant.
+
+Because physical performance and asthma liability are positively genetically correlated in the current simulation, selection for increased performance is also expected to produce a correlated increase in asthma liability.
+
+```{r message=FALSE}
+n_generations=10
+n_mares=100
+n_stallions=100
+n_breeding_stallions=20
+
+# Store generation 0 before selection
+base_mares=mares
+base_stallions=stallion_center
+base_population=mergePops(list(base_mares,base_stallions))
+
+for(gen in 1:n_generations){
+  # Select the 20 stallions with highest phenotypic performance
+  breeding_stallions=selectInd(stallion_center, nInd=n_breeding_stallions,
+                               trait=1, use="pheno", sex="M", simParam=SP)
+
+  # Generate offspring
+  offspring=randCross2(females=mares, males=breeding_stallions,
+                       nCrosses=n_mares, nProgeny=4, simParam=SP)
+
+  # Separate female and male candidates
+  female_candidates=offspring[offspring@sex=="F"]
+  male_candidates=offspring[offspring@sex=="M"]
+
+  # Select the best 100 females for performance
+  mares=selectInd(female_candidates, nInd=n_mares,
+                  trait=1,  use="pheno",  sex="F",  simParam=SP )
+
+  # Select the best 100 males for performance
+  stallion_center=selectInd(male_candidates,  nInd=n_stallions,
+                            trait=1,use="pheno",  sex="M", simParam=SP)
+}
+
+# Store generation 10
+last_mares=mares
+last_stallions=stallion_center
+last_population=mergePops(list(last_mares,last_stallions))
+
+cat(
+  " Generation  0 :",base_population@nInd,"horses\n",
+  "Generation",n_generations,":",last_population@nInd,"horses\n"
+)
+```
+
+> **NOTE:** `base_population` contains the 200 horses before selection (generation 0), whereas `last_population` contains the 200 horses after 10 generations of selection for physical performance.
+
+### Extract the phenotypes
+
+We now extract the phenotypic values of the **generation 0** and **generation 10** populations.
+The resulting datasets contain physical performance, asthma liability, and the 500 simulated gene-expression traits.
+
+```{r message=FALSE}
+P0=pheno(base_population)
+P10=pheno(last_population)
+
+colnames(P0)=trait_names
+colnames(P10)=trait_names
+
+base_records=data.frame(ID=base_population@id,P0)
+last_records=data.frame(ID=last_population@id,P10)
+```
+
+### Compare performance and asthma liability across generations
+
+We compare the phenotypic distributions before selection (**generation 0**; blue) and after 10 generations of selection for physical performance (**generation 10**; red).
+
+```{r message=FALSE}
+par(mfrow=c(1,2))
+
+# Physical performance
+brks=seq(min(c(base_records$Perf,last_records$Perf)),
+         max(c(base_records$Perf,last_records$Perf)),length.out=25)
+
+h0=hist(base_records$Perf,breaks=brks,plot=FALSE)
+h10=hist(last_records$Perf,breaks=brks,plot=FALSE)
+
+hist(base_records$Perf,breaks=brks,
+     col=adjustcolor("lightblue",0.7),border="steelblue",
+     ylim=c(0,max(h0$counts,h10$counts)),
+     main="Physical performance",xlab="Performance")
+
+hist(last_records$Perf,breaks=brks,
+     col=adjustcolor("darkred",0.5),border="darkred",add=TRUE)
+
+# Asthma liability
+brks=seq(min(c(base_records$Asthma,last_records$Asthma)),
+         max(c(base_records$Asthma,last_records$Asthma)),length.out=25)
+
+h0=hist(base_records$Asthma,breaks=brks,plot=FALSE)
+h10=hist(last_records$Asthma,breaks=brks,plot=FALSE)
+
+hist(base_records$Asthma,breaks=brks,
+     col=adjustcolor("lightblue",0.7),border="steelblue",
+     ylim=c(0,max(h0$counts,h10$counts)),
+     main="Asthma liability",xlab="Asthma liability")
+
+hist(last_records$Asthma,breaks=brks,
+     col=adjustcolor("darkred",0.5),border="darkred",add=TRUE)
+
+par(mfrow=c(1,1))
+```
+
+Because performance and asthma liability are positively genetically correlated in the simulation, selection for greater physical performance is expected to shift not only the performance distribution but also the distribution of asthma liability.
+
+### Create the experimental dataset
+
+We first define the threshold for severe equine asthma using the **generation 0 population**.
+The threshold is chosen so that approximately **1% of horses in the original population are classified as affected**.
+
+Horses with an asthma-liability value above this threshold are classified as **cases**, whereas horses at or below the threshold are classified as **controls**.
+
+```{r message=FALSE}
+# Define the asthma threshold from generation 0
+asthma_threshold=quantile(base_records$Asthma,0.99,type=1)
+
+# Classify all horses
+base_records$Asthma_group=ifelse(base_records$Asthma>asthma_threshold,"Case","Control")
+last_records$Asthma_group=ifelse(last_records$Asthma>asthma_threshold,"Case","Control")
+
+cat("Asthma threshold =",round(asthma_threshold,2),"\n")
+cat("Generation 0 affected =",round(mean(base_records$Asthma_group=="Case")*100,1),"%\n")
+cat("Generation 10 affected =",round(mean(last_records$Asthma_group=="Case")*100,1),"%\n")
+```
+
+We now establish the RNA-seq experiment.
+We select:
+
+-   **6 affected horses from generation 10**, representing horses produced after selection for physical performance;
+-   **6 unaffected horses from generation 0**, representing horses from the same original population that were not subjected to this selection.
+
+```{r message=FALSE}
+n_cases=6
+n_controls=6
+
+case_pool=which(last_records$Asthma_group=="Case")
+control_pool=which(base_records$Asthma_group=="Control")
+
+if(length(case_pool)<n_cases) stop("Not enough asthma cases in generation 10. Reduce n_cases.")
+if(length(control_pool)<n_controls) stop("Not enough controls in generation 0.")
+
+cases=last_records[sample(case_pool,n_cases),]
+controls=base_records[sample(control_pool,n_controls),]
+
+cases$Generation=10
+controls$Generation=0
+
+study_records=rbind(controls,cases)
+study_records$Asthma_group=factor(study_records$Asthma_group,
+                                  levels=c("Control","Case"))
+
+table(study_records$Generation,study_records$Asthma_group)
+```
+
+## RNA-Seq sequencing {#RNAseq}
+
+The first **500 genes** were included directly in `AlphaSimR` and therefore contain the biological relationships with asthma liability introduced earlier in the simulation.
+
+Real RNA-seq experiments, however, measure thousands of additional genes, most of which are not strongly associated with the phenotype of interest.
+We therefore add **2,500 additional background genes**, resulting in a total of **3,000 genes**.
+
+The additional genes are initially generated as continuous, approximately Normally distributed expression values.
+
+```{r message=FALSE}
+n_background=2500
+
+# Shared random effect among genes
+shared_effect=rnorm(nrow(study_records))
+
+# Random effect of the shared component on each gene
+gene_effect=runif(n_background,-0.3,0.3)
+
+# Generate correlated background genes
+background=outer(shared_effect,gene_effect)+
+           matrix(rnorm(nrow(study_records)*n_background),
+                  nrow=nrow(study_records))
+
+colnames(background)=paste0("Gene_",501:3000)
+
+study_records=cbind(study_records,background)
+
+all_gene_names=paste0("Gene_",1:3000)
+```
+
+### Convert latent expression into RNA-seq counts
+
+The gene-expression traits simulated above are continuous and approximately Normally distributed.
+RNA-seq data, however, consist of non-negative integer read counts.
+We therefore transform the latent gene-expression values into expected RNA-seq counts in several steps.
+
+First, expression values are standardized within each gene:
+
+$$
+Z_{ij}=\frac{X_{ij}-\bar X_j}{s_j}
+$$
+
+where $X_{ij}$ is the simulated expression of gene $j$ in horse $i$.
+This gives each gene a mean of approximately 0 and a standard deviation of 1 while preserving the relative differences among horses.
+
+```{r message=FALSE}
+X=as.matrix(study_records[,all_gene_names])
+X=scale(X)
+```
+
+Genes in a real RNA-seq experiment differ greatly in their average abundance.
+e therefore assign each gene a different baseline relative expression level, sampled from a log-normal distribution centred around 100 on an arbitrary expression scale.
+
+```{r message=FALSE}
+base_mean=exp(rnorm(ncol(X),log(100),1))
+```
+
+The standardized expression value is then converted to a positive multiplicative effect:
+
+$$
+\mu_{ij}^{*}=B_j\,e^{0.5Z_{ij}}
+$$
+
+where $B_j$ is the baseline expression of gene $j$.
+Thus, horses with higher latent expression for a gene receive a larger expected read count for that gene.
+The value `0.5` controls how strongly differences in the latent trait are translated into differences in read abundance.
+
+```{r message=FALSE}
+mu=exp(0.5*X)
+mu=sweep(mu,2,base_mean,"*")
+```
+
+RNA-seq samples also differ in their total sequencing depth.
+We therefore assign each horse a target library size centred around **35 million mapped reads**, approximately matching the sequencing depth reported by [Tessier et al. (2017)](https://doi.org/10.1186/s12864-017-4107-6).
+
+```{r message=FALSE}
+library_size=round(rnorm(nrow(X),mean=35000000,sd=4000000))
+```
+
+Finally, the expected expression values are converted into relative proportions within each horse ($i$) and scaled so that their expected total corresponds to the target library size ($\times L_i$):
+
+$$
+\mu_{ij}
+=
+\frac{\mu_{ij}^{*}}
+{\sum_j\mu_{ij}^{*}}
+\times L_i
+$$
+
+```{r message=FALSE}
+mu=sweep(mu,1,rowSums(mu),"/")
+mu=sweep(mu,1,library_size,"*")
+```
+
+At this point, `mu` contains the **expected number of reads** for every gene in every horse.
+These expected counts can then be used as the means of the negative-binomial distributions from which the observed RNA-seq counts are sampled.
+
+```{r message=FALSE}
+# Generate negative-binomial RNA-seq counts
+RNA_counts=matrix(
+  rnbinom(length(mu),mu=as.vector(mu),size=10),
+  nrow=nrow(mu),
+  ncol=ncol(mu)
+)
+
+colnames(RNA_counts)=all_gene_names
+rownames(RNA_counts)=study_records$ID
+
+cat("Average mapped reads =",
+    round(mean(rowSums(RNA_counts))/1000000,1),
+    "million reads per horse\n")
+```
+
+The final RNA-seq dataset therefore contains **3,000 genes measured in each experimental horse** as integer read counts.
+
+```{r message=FALSE}
+RNA_data=data.frame(
+  ID=study_records$ID,
+  Generation=study_records$Generation,
+  Asthma=study_records$Asthma,
+  Asthma_group=study_records$Asthma_group,
+  RNA_counts
+)
+```
+
+### From continuous expression to RNA-seq counts
+
+To visualize the transformation, we randomly select five genes and compare their original continuous expression values with their simulated negative-binomial read counts.
+
+```{r message=FALSE}
+selected_genes=sample(all_gene_names,5)
+
+cols=c("lightblue","lightgreen","lightpink","khaki","plum")
+
+par(mfrow=c(1,2))
+
+# Continuous latent expression
+x=X[,selected_genes]
+brks=seq(min(x),max(x),length.out=15)
+
+hist(x[,1],breaks=brks,col=adjustcolor(cols[1],0.5),
+     border=cols[1],main="Latent gene expression",
+     xlab="Expression value")
+
+for(i in 2:5){
+  hist(x[,i],breaks=brks,col=adjustcolor(cols[i],0.5),
+       border=cols[i],add=TRUE)
+}
+
+# Negative-binomial RNA-seq counts
+x=RNA_counts[,selected_genes]
+brks=seq(min(x),max(x),length.out=15)
+
+hist(x[,1],breaks=brks,col=adjustcolor(cols[1],0.5),
+     border=cols[1],main="RNA-seq counts",
+     xlab="Read counts")
+
+for(i in 2:5){
+  hist(x[,i],breaks=brks,col=adjustcolor(cols[i],0.5),
+       border=cols[i],add=TRUE)
+}
+
+par(mfrow=c(1,1))
+```
+
+## Analysis of simulated RNA-seq data {#analysis}
+
+We now investigate which genes are differentially expressed between horses classified as **asthma cases** and **healthy controls**.
+
+We use `DESeq2`, which performs a standard count-based RNA-seq analysis.
+The method:
+
+1.  uses the **raw RNA-seq counts**;
+2.  estimates sample-specific size factors using the **median-of-ratios normalization**;
+3.  models gene counts using a **negative binomial distribution**;
+4.  estimates the fold change between cases and controls;
+5.  adjusts the resulting P-values for multiple testing using a false discovery rate (FDR).
+
+```{r message=FALSE, warning=FALSE}
+# DESeq2 requires genes in rows and horses in columns
+count_matrix=t(RNA_counts)
+
+# Information describing each horse
+sample_data=data.frame(Asthma_group=study_records$Asthma_group)
+rownames(sample_data)=study_records$ID
+```
+
+### Differential-expression analysis
+
+We create the `DESeq2` dataset and remove genes with fewer than 10 reads across the complete experiment.
+
+```{r message=FALSE, warning=FALSE}
+dds=DESeq2::DESeqDataSetFromMatrix(countData=count_matrix,
+                                   colData=sample_data, design=~Asthma_group)
+dds=dds[rowSums(counts(dds))>=10,]
+dds=DESeq2::DESeq(dds)
+```
+
+We compare **asthma cases vs. controls**.
+Therefore:
+
+-   a **positive log2 fold change** indicates **greater** expression in asthma cases
+-   a **negative log2 fold change** indicates **greater** expression in healthy controls
+
+```{r message=FALSE}
+res=results(dds,contrast=c("Asthma_group","Case","Control"))
+
+DE_results=data.frame(Gene=rownames(res), log2FC=res$log2FoldChange,
+                      P=res$pvalue, FDR=res$padj)
+
+DE_results=DE_results[order(DE_results$FDR),]
+head(DE_results,10)
+```
+
+### Identify differentially expressed genes
+
+For this practical, genes are considered differentially expressed when:
+
+$$
+FDR<0.05
+$$
+
+and
+
+$$
+|\log_2FC|>1
+$$ A $\log_2FC=1$ corresponds to a twofold higher expression in cases, whereas a $\log_2FC=-1$ corresponds to a twofold higher expression in controls.
+
+```{r message=FALSE}
+DE_results$Group="Not significant"
+
+DE_results$Group[!is.na(DE_results$FDR) & 
+                 DE_results$FDR<0.05 & 
+                 DE_results$log2FC>1]="Higher in asthma cases"
+
+DE_results$Group[!is.na(DE_results$FDR) &
+                   DE_results$FDR<0.05 &
+                   DE_results$log2FC< -1]="Higher in controls"
+table(DE_results$Group)
+```
+
+Because the first 500 genes were simulated with relationships with asthma liability, we can also check whether the genes detected by the analysis correspond to these biologically structured genes or to the 2,500 background genes.
+
+```{r message=FALSE}
+gene_number=as.numeric(sub("Gene_","",DE_results$Gene))
+
+DE_results$Simulation=ifelse(gene_number<=500,"Asthma-correlated","Background")
+
+table(DE_results$Simulation,DE_results$Group)
+```
+
+### Volcano plot
+
+A volcano plot combines the magnitude of the expression difference and the statistical evidence for differential expression:
+
+-   the **x-axis** represents the $\log_2$ fold change;
+-   the **y-axis** represents $-\log_{10}(FDR)$;
+-   genes on the **right** are expressed more strongly in asthma cases;
+-   genes on the **left** are expressed more strongly in healthy controls.
+
+```{r message=FALSE}
+DE_results$y=-log10(DE_results$FDR)
+
+cols=rep("grey70",nrow(DE_results))
+cols[DE_results$Group=="Higher in asthma cases"]="darkred"
+cols[DE_results$Group=="Higher in controls"]="steelblue"
+
+plot(DE_results$log2FC, DE_results$y, pch=16, cex=0.7, col=cols,
+  xlab=expression(log[2]*" fold change (Case / Control)"),
+  ylab=expression(-log[10]*"(FDR)"),
+  main="Differential gene expression"
+)
+
+abline(v=c(-1,1),lty=2)
+abline(h=-log10(0.05),lty=2)
+```
+
+The volcano plot highlights genes whose expression differs between the two experimental groups.
+Genes shown in **dark red** have higher expression in asthma cases, whereas genes shown in **steel blue** have higher expression in healthy controls.
+
+> **NOTE:** In this simulated experiment, asthma cases originate from generation 10 and controls from generation 0.
+> Therefore, asthma status and selection history are confounded.
+> The identified genes should consequently be interpreted as **genes associated with the difference between the two groups**, rather than necessarily as genes specifically associated with asthma.
+
+
+## Power testing 💪 {#power}
+
+We can use the simulation to evaluate how **balanced sample size** affects the ability to recover the known gene-expression relationships.
+
+The first **500 genes** were simulated as related to asthma liability, whereas genes **501--3000** are background genes with no imposed relationship with asthma.
+We therefore define:
+
+$$
+\text{False-positive rate}=
+\frac{\text{significant background genes}}
+{\text{all background genes}}
+$$
+
+and:
+
+$$
+\text{False-negative rate}=
+\frac{\text{non-significant asthma-related genes}}
+{\text{all asthma-related genes}}
+$$
+
+A gene is considered detected when:
+
+$$
+FDR<0.05
+\quad\text{and}\quad
+|\log_2FC|>1
+$$
+
+To isolate the effect of sample size, we first generate one RNA-seq dataset containing the maximum possible balanced number of cases and controls given the selection program and the liability threshold selected above.
+
+```{r message=FALSE, warning=FALSE}
+# Maximum balanced sample size
+case_pool=which(last_records$Asthma_group=="Case")
+control_pool=which(base_records$Asthma_group=="Control")
+max_n=min(length(case_pool),length(control_pool))
+
+if(max_n<2) stop("At least 2 cases and 2 controls are required.")
+
+# Select the maximum available balanced population
+cases=last_records[sample(case_pool,max_n),]
+controls=base_records[sample(control_pool,max_n),]
+cases$Generation=10
+controls$Generation=0
+power_records=rbind(controls,cases)
+power_records$Asthma_group=factor(c(rep("Control",max_n),rep("Case",max_n)),
+                                  levels=c("Control","Case"))
+
+# Add the 2500 background genes
+n_background=2500
+shared_effect=rnorm(nrow(power_records))
+gene_effect=runif(n_background,-0.3,0.3)
+
+background=outer(shared_effect,gene_effect)+
+           matrix(rnorm(nrow(power_records)*n_background),
+                  nrow=nrow(power_records))
+
+colnames(background)=paste0("Gene_",501:3000)
+power_records=cbind(power_records,background)
+
+# Convert latent expression to RNA-seq counts
+all_gene_names=paste0("Gene_",1:3000)
+X=scale(as.matrix(power_records[,all_gene_names]))
+
+base_mean=exp(rnorm(ncol(X),log(100),1))
+mu=sweep(exp(0.5*X),2,base_mean,"*")
+
+library_size=round(rnorm(nrow(X),35000000,4000000))
+mu=sweep(mu,1,rowSums(mu),"/")
+mu=sweep(mu,1,library_size,"*")
+
+RNA_power=matrix(rnbinom(length(mu),mu=as.vector(mu),size=10),
+                 nrow=nrow(mu),ncol=ncol(mu))
+
+colnames(RNA_power)=all_gene_names
+rownames(RNA_power)=power_records$ID
+```
+
+### Evaluate increasing sample size
+
+We now increase the balanced design from **1 case + 1 control** up to the maximum number of cases available.
+As `DESeq2` cannot estimate biological dispersion with only one individual per group, so $n=1$ is reported as `NA`.
+Differential-expression analysis begins at **2 cases + 2 controls**.
+
+The same randomly ordered animals are progressively added to the analysis so that each larger experiment contains the animals from the previous smaller experiment.
+
+```{r message=FALSE, warning=FALSE}
+case_order=sample(which(power_records$Asthma_group=="Case"))
+control_order=sample(which(power_records$Asthma_group=="Control"))
+
+# Results database
+power_results=data.frame(n=1:max_n, Background_positive=NA,Background_negative=NA)
+
+for(n in 2:max_n){
+  # Extract number of cases
+  ids=c(control_order[1:n],case_order[1:n])
+
+  counts_n=t(RNA_power[ids,,drop=FALSE])
+  group=power_records$Asthma_group[ids]
+
+  coldata=data.frame(Asthma_group=group,row.names=rownames(RNA_power)[ids])
+  
+  #Run DESeq2
+  dds=DESeq2::DESeqDataSetFromMatrix(countData=counts_n,
+                                     colData=coldata, design=~Asthma_group)
+
+  dds=dds[rowSums(DESeq2::counts(dds))>=10,]
+  dds=DESeq2::DESeq(dds,quiet=TRUE)
+
+  res=DESeq2::results(dds,contrast=c("Asthma_group","Case","Control"))
+
+  # Identify background genes
+  gene_number=as.numeric(sub("Gene_","",rownames(res)))
+  background_gene=gene_number>500
+  
+  # Significant genes with positive and negative fold changes
+  significant_positive=!is.na(res$padj) & res$padj<0.05 & res$log2FoldChange>1
+  significant_negative=!is.na(res$padj) & res$padj<0.05 & res$log2FoldChange< -1
+  
+  # Proportion of background genes among significant genes
+  if(sum(significant_positive)>0){
+    power_results$Background_positive[n]=
+      mean(background_gene[significant_positive])
+  }
+  
+  if(sum(significant_negative)>0){
+    power_results$Background_negative[n]=
+      mean(background_gene[significant_negative])
+  }
+}
+
+power_results
+```
+
+### Visualize the effect of sample size
+
+```{r message=FALSE}
+plot(power_results$n,
+     power_results$Background_positive*100,
+     type="b",pch=16,col="steelblue",
+     ylim=c(0,100),
+     xlab="Cases and controls per group",
+     ylab="Background genes among significant genes (%)",
+     main="Effect of RNA-seq sample size")
+
+lines(power_results$n,
+      power_results$Background_negative*100,
+      type="b",pch=16,col="darkred")
+```
+
+As sample size increases, we would generally expect the *false-negative rate to decrease*, because the experiment gains power to detect genes truly associated with asthma.
+The *false-positive rate* should remain comparatively low because `DESeq2` applies multiple-testing correction, although random sampling and the simulated population structure can still generate false-positive associations.
+
+> **NOTE:** This is a simplified demonstration of statistical power using a single simulated dataset.
+> A formal power analysis would repeat the sampling many times for each sample size and report the average detection rates and their variability.
+
+------------------------------------------------------------------------
+
+## Recommended literature
+
+-   Gaynor, R.C., Gorjanc, G.
+    & Hickey, J.M.
+    (2021).
+    [AlphaSimR: an R package for breeding program simulations](https://doi.org/10.1093/g3journal/jkaa017).
+    *G3 Genes\|Genomes\|Genetics*.
+
+-   Tessier, L., Côté, O., Clark, M.E., Viel, L., Diaz-Méndez, A., Anders, S.
+    & Bienzle, D.
+    (2017).
+    [Impaired response of the bronchial epithelium to inflammation characterizes severe equine asthma](https://doi.org/10.1186/s12864-017-4107-6).
+    *BMC Genomics*, 18, 708.
+
+-   Love, M.I., Huber, W.
+    & Anders, S.
+    (2014).
+    [Moderated estimation of fold change and dispersion for RNA-seq data with DESeq2](https://doi.org/10.1186/s13059-014-0550-8).
+    *Genome Biology*.
+
+-   Conesa, A., Madrigal, P., Tarazona, S., Gomez-Cabrero, D., Cervera, A., McPherson, A., Szcześniak, M.W., Gaffney, D.J., Elo, L.L., Zhang, X.
+    & Mortazavi, A.
+    (2016).
+    [A survey of best practices for RNA-seq data analysis](https://doi.org/10.1186/s13059-016-0881-8).
+    *Genome Biology*.
