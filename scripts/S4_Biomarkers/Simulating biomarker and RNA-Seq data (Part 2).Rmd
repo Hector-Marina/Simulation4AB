@@ -104,7 +104,7 @@ trait_parameters=data.frame(
 trait_parameters
 ```
 
-We assume that physical performance and asthma liability are positively genetically correlated $r_{Perf,Asthma}=0.50$. Thus, horses with greater physical performance tend to have higher liability to severe asthma. Additionally, the residual correlation is calibrated so that the expected phenotypic correlation between the two traits is $+0.30$
+We assume that physical performance and asthma liability are positively genetically correlated $ r_{Perf,Asthma}=0.50 $. Thus, horses with greater physical performance tend to have higher liability to severe asthma. Additionally, the residual correlation is calibrated so that the expected phenotypic correlation between the two traits is $+0.30$
 
 ```{r message=FALSE}
 target_corP=0.30
